@@ -75,6 +75,66 @@ menu_main() {
   done
 }
 
+# --------------------------------------------------- проверки установки ---
+# До установки: база должна быть здорова. Иначе модуль запишет инбаунд
+# в конфиг, движок не поднимется, и протокол останется в состоянии down —
+# ровно то, что происходит, когда порт уже кем-то занят.
+pl_preflight() {
+  local f="$1" engine port proto svc rc=0
+  engine=$(mod_meta "$f" MOD_ENGINE)
+  port=$(mod_meta "$f" MOD_PORT)
+  proto=$(mod_meta "$f" MOD_PROTO)
+
+  [ -n "$PL_DOMAIN" ] || { ui_err "домен не задан в $PL_META"; rc=1; }
+
+  case "$engine" in
+    sing-box)
+      if ! sing-box check -c "$PL_SB" >/dev/null 2>&1; then
+        ui_err "конфиг sing-box невалиден — сначала почини его"; rc=1
+      fi ;;
+  esac
+
+  svc="$engine"
+  if systemctl list-unit-files "$svc.service" >/dev/null 2>&1; then
+    if ! systemctl is-active --quiet "$svc"; then
+      ui_err "$svc не запущен — установка оставит протокол нерабочим"
+      ui_note "journalctl -u $svc -n 20 --no-pager"
+      rc=1
+    fi
+  fi
+
+  if [ "$(mod_meta "$f" MOD_VIA_HAPROXY)" = yes ] && ! systemctl is-active --quiet haproxy; then
+    ui_err "haproxy не запущен, а протокол ходит через него"; rc=1
+  fi
+
+  # Сертификат нужен не всем: REALITY обходится без него.
+  if grep -q 'PL_CERT' "$f" && [ ! -f "$PL_CERT" ]; then
+    ui_err "нет сертификата $PL_CERT"; rc=1
+  fi
+
+  # Занятый порт — это то, обо что спотыкается движок уже после записи конфига.
+  if pl_port_listening "$port" "$proto"; then
+    ui_err "порт $port/$proto уже кем-то занят"
+    ui_note "ss -tlnp | grep :$port"
+    rc=1
+  fi
+
+  return $rc
+}
+
+# После установки: сверяем не код возврата, а фактическое состояние.
+pl_postflight() {
+  local f="$1" engine
+  engine=$(mod_meta "$f" MOD_ENGINE)
+  case "$(mod_call "$f" mod_status)" in
+    up)      ui_ok   "готово, порт слушается" ;;
+    blocked) ui_warn "поднят, но порт закрыт в UFW — пункт «починить firewall»" ;;
+    down)    ui_err  "инбаунд записан, но порт не слушается"
+             ui_note "journalctl -u $engine -n 20 --no-pager" ;;
+    off)     ui_err  "инбаунд в конфиге не появился" ;;
+  esac
+}
+
 # ------------------------------------------------------- меню протокола ---
 menu_module() {
   local f="$1" name state
@@ -104,13 +164,22 @@ menu_module() {
 
     case "$(ui_ask "выбор")" in
       1) if [ "$state" = off ]; then
-           mod_call "$f" mod_install && ui_ok "готово"
+           if pl_preflight "$f"; then
+             mod_call "$f" mod_install && pl_postflight "$f"
+           else
+             ui_note "установка отменена, конфиг не тронут"
+           fi
          else
            printf '\n'; mod_call "$f" mod_link uri; printf '\n'
          fi
          ui_ask "enter" >/dev/null ;;
       2) ui_confirm "переустановить $name? текущие ключи будут заменены" \
-           && { mod_call "$f" mod_remove; mod_call "$f" mod_install && ui_ok "готово"; }
+           && { mod_call "$f" mod_remove
+                if pl_preflight "$f"; then
+                  mod_call "$f" mod_install && pl_postflight "$f"
+                else
+                  ui_note "установка отменена, протокол остался удалённым"
+                fi; }
          ui_ask "enter" >/dev/null ;;
       3) ui_confirm "удалить $name? откат — только переустановка с новыми ключами" \
            && { mod_call "$f" mod_remove && ui_ok "удалён"; }
