@@ -314,6 +314,30 @@ if [ ! -f /etc/sing-box/config.json ]; then
   "outbounds": [ { "type": "direct", "tag": "direct" } ]
 }
 SB
+  ok "конфиг создан"
+else
+  # Пакет sing-box кладёт свой демонстрационный конфиг (shadowsocks на 8080),
+  # который конфликтует с decoy-сайтом и роняет сервис на старте. Свои
+  # инбаунды packetlab всегда тегирует, поэтому нетегированные — чужие.
+  # `sing-box check` такое не ловит: синтаксис валиден, падает уже listener.
+  if python3 - <<'PYSB'
+import json, shutil, time, sys
+p = '/etc/sing-box/config.json'
+d = json.load(open(p))
+keep = [i for i in d.get('inbounds', []) if i.get('tag')]
+drop = [i for i in d.get('inbounds', []) if not i.get('tag')]
+if not drop:
+    sys.exit(1)
+shutil.copy2(p, p + '.bak-%d' % time.time())
+d['inbounds'] = keep
+json.dump(d, open(p, 'w'), indent=2, ensure_ascii=False)
+print(', '.join('%s:%s' % (i.get('type'), i.get('listen_port')) for i in drop))
+PYSB
+  then
+    ok "убраны чужие инбаунды из конфига (копия рядом, .bak-*)"
+  else
+    ok "конфиг на месте"
+  fi
 fi
 sing-box check -c /etc/sing-box/config.json >/dev/null 2>&1 || die "базовый конфиг невалиден"
 systemctl enable sing-box >/dev/null 2>&1
