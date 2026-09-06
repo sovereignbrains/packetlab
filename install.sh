@@ -295,7 +295,15 @@ HTML
 # haproxy отдаёт сюда TLS как есть, не расшифровывая (иначе сломался бы
 # REALITY), поэтому терминировать соединение обязан сам Caddy — иначе клиент
 # здоровается TLS с открытым HTTP и получает ошибку рукопожатия.
-/etc/letsencrypt/renewal-hooks/deploy/packetlab.sh >/dev/null 2>&1
+#
+# Копию сертификата раскладываем здесь же, а не вызовом deploy-хука: хук
+# перезапускает sing-box, а это рвёт соединение тому, кто подключён к серверу
+# через его же прокси.
+install -d -m 750 /var/lib/packetlab/certs
+cp -L "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" /var/lib/packetlab/certs/fullchain.pem 2>/dev/null
+cp -L "/etc/letsencrypt/live/$DOMAIN/privkey.pem"   /var/lib/packetlab/certs/privkey.pem   2>/dev/null
+chgrp caddy /var/lib/packetlab/certs /var/lib/packetlab/certs/*.pem 2>/dev/null
+chmod 640 /var/lib/packetlab/certs/*.pem 2>/dev/null
 
 cat > /etc/caddy/Caddyfile <<CADDY
 {
@@ -327,6 +335,7 @@ fi
 # -------------------------------------------------------------- sing-box -
 head_ "sing-box" "пустой конфиг, инбаунды добавит меню"
 install -d /etc/sing-box
+sb_before=$(md5sum /etc/sing-box/config.json 2>/dev/null | awk '{print $1}')
 if [ ! -f /etc/sing-box/config.json ]; then
   cat > /etc/sing-box/config.json <<'SB'
 {
@@ -362,8 +371,24 @@ PYSB
 fi
 sing-box check -c /etc/sing-box/config.json >/dev/null 2>&1 || die "базовый конфиг невалиден"
 systemctl enable sing-box >/dev/null 2>&1
-systemctl restart sing-box
-ok "sing-box запущен"
+
+# Рестарт рвёт активные соединения, включая SSH того, кто подключён к серверу
+# через его же прокси. Поэтому трогаем сервис только если он лежит или если
+# конфиг в этом запуске изменился.
+sb_after=$(md5sum /etc/sing-box/config.json 2>/dev/null | awk '{print $1}')
+if ! systemctl is-active --quiet sing-box; then
+  systemctl start sing-box
+  sleep 1
+  systemctl is-active --quiet sing-box && ok "sing-box запущен" \
+    || warn "sing-box не поднялся: journalctl -u sing-box -n 20 --no-pager"
+elif [ "$sb_before" != "$sb_after" ]; then
+  systemctl restart sing-box
+  sleep 1
+  systemctl is-active --quiet sing-box && ok "sing-box перезапущен (конфиг изменился)" \
+    || warn "sing-box не поднялся: journalctl -u sing-box -n 20 --no-pager"
+else
+  ok "sing-box работает, конфиг не менялся"
+fi
 
 # ------------------------------------------------------------ packetlab --
 head_ "packetlab"
