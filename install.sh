@@ -249,6 +249,13 @@ ok "открыты: SSH, 443/tcp. Порты протоколов откроют
 # --------------------------------------------------------------- haproxy -
 head_ "haproxy" "SNI-мультиплексор на 443/tcp"
 [ -f /etc/haproxy/haproxy.cfg ] && cp -a /etc/haproxy/haproxy.cfg "/etc/haproxy/haproxy.cfg.orig-$(date +%s)"
+
+# Правила use_backend дописывают в этот файл модули протоколов. Перезапись
+# базового конфига стирала бы их, и трафик с SNI протокола уходил бы на
+# decoy — клиент получал бы сертификат домена вместо ожидаемого.
+if grep -q 'frontend tls_in' /etc/haproxy/haproxy.cfg 2>/dev/null; then
+  ok "haproxy.cfg уже настроен, правила модулей сохранены"
+else
 cat > /etc/haproxy/haproxy.cfg <<'HAP'
 global
     daemon
@@ -274,6 +281,7 @@ backend site
     mode tcp
     server site 127.0.0.1:8080
 HAP
+fi
 haproxy -c -f /etc/haproxy/haproxy.cfg >/dev/null 2>&1 || die "haproxy.cfg невалиден"
 systemctl enable --now haproxy >/dev/null 2>&1
 ok "haproxy поднят"
