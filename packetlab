@@ -1,0 +1,163 @@
+#!/usr/bin/env bash
+# packetlab — управление стеком после установки.
+# Ставится в /usr/local/bin/packetlab. Без аргументов открывает меню,
+# с аргументами работает как обычный CLI (для скриптов и cron).
+set -uo pipefail
+
+PL_ROOT=${PL_ROOT:-/opt/packetlab}
+. "$PL_ROOT/lib/ui.sh"
+. "$PL_ROOT/lib/core.sh"      # pl_* хелперы: singbox, ufw, dns, meta, secrets
+. "$PL_ROOT/lib/state.sh"
+
+[ "$(id -u)" -eq 0 ] || { ui_err "нужен root"; exit 1; }
+
+# ------------------------------------------------------------- загрузка ---
+MODULES=()
+for f in "$PL_ROOT"/modules/*.sh; do
+  [ -e "$f" ] || continue
+  MODULES+=("$f")
+done
+
+# Метаданные модуля читаются в подоболочке, чтобы переменные соседних
+# модулей не затирали друг друга.
+mod_meta() {  # mod_meta <файл> <переменная>
+  ( . "$1"; eval "printf '%s' \"\${$2:-}\"" )
+}
+mod_call() {  # mod_call <файл> <функция> [аргументы]
+  local f="$1" fn="$2"; shift 2
+  ( . "$f"; "$fn" "$@" )
+}
+
+# ---------------------------------------------------------------- меню ----
+menu_main() {
+  local i choice f id name desc state port
+
+  while true; do
+    ui_head "packetlab" "$(pl_domain_or_unset) · $(pl_engine_line)"
+
+    ui_section "протоколы"
+    i=1
+    for f in "${MODULES[@]}"; do
+      name=$(mod_meta "$f" MOD_NAME)
+      desc=$(mod_meta "$f" MOD_DESC)
+      port=$(mod_meta "$f" MOD_PORT)/$(mod_meta "$f" MOD_PROTO)
+      state=$(mod_call "$f" mod_status)
+      ui_row "$i" "$name" "$state" "$port"
+      i=$((i+1))
+    done
+
+    ui_section "сервер"
+    ui_row "s" "статус и диагностика"   "$(pl_health)"   ""
+    ui_row "u" "пользователи"           "up"             "$(pl_user_count)"
+    ui_row "l" "ссылка-подписка"        "$(pl_sub_state)" ""
+    ui_row "c" "сертификат"             "$(pl_cert_state)" "$(pl_cert_days)"
+    ui_row "t" "тюнинг ядра"            "$(pl_sysctl_state)" ""
+
+    ui_section ""
+    printf '  %sq%s  выход\n\n' "$C_B" "$C_RST"
+
+    choice=$(ui_ask "выбор")
+    case "$choice" in
+      ''|q|Q) printf '\n'; exit 0 ;;
+      s) menu_health ;;
+      u) menu_users ;;
+      l) menu_sub ;;
+      c) menu_cert ;;
+      t) menu_sysctl ;;
+      *)
+        if [ "$choice" -ge 1 ] 2>/dev/null && [ "$choice" -le "${#MODULES[@]}" ]; then
+          menu_module "${MODULES[$((choice-1))]}"
+        else
+          ui_err "нет такого пункта"; sleep 1
+        fi
+        ;;
+    esac
+  done
+}
+
+# ------------------------------------------------------- меню протокола ---
+menu_module() {
+  local f="$1" name state
+  name=$(mod_meta "$f" MOD_NAME)
+
+  while true; do
+    state=$(mod_call "$f" mod_status)
+    ui_head "$name" "$(mod_meta "$f" MOD_DESC) · $(mod_meta "$f" MOD_ENGINE)"
+
+    printf '  состояние: %s\n' "$(ui_badge "$state")"
+    case "$state" in
+      blocked) ui_warn "инбаунд поднят, но порт закрыт в UFW — клиент получит таймаут" ;;
+      down)    ui_warn "инбаунд в конфиге есть, но порт никто не слушает" ;;
+    esac
+
+    ui_section ""
+    case "$state" in
+      off) ui_row "1" "установить" "off" "" ;;
+      *)
+        ui_row "1" "показать ссылку"  "up" ""
+        ui_row "2" "переустановить"   "up" ""
+        ui_row "3" "удалить"          "up" ""
+        [ "$state" = blocked ] && ui_row "4" "починить firewall" "blocked" ""
+        ;;
+    esac
+    printf '  %sb%s  назад\n\n' "$C_B" "$C_RST"
+
+    case "$(ui_ask "выбор")" in
+      1) if [ "$state" = off ]; then
+           mod_call "$f" mod_install && ui_ok "готово"
+         else
+           printf '\n'; mod_call "$f" mod_link uri; printf '\n'
+         fi
+         ui_ask "enter" >/dev/null ;;
+      2) ui_confirm "переустановить $name? текущие ключи будут заменены" \
+           && { mod_call "$f" mod_remove; mod_call "$f" mod_install && ui_ok "готово"; }
+         ui_ask "enter" >/dev/null ;;
+      3) ui_confirm "удалить $name? откат — только переустановка с новыми ключами" \
+           && { mod_call "$f" mod_remove && ui_ok "удалён"; }
+         ui_ask "enter" >/dev/null ;;
+      4) pl_ufw_open "$(mod_meta "$f" MOD_PORT)" "$(mod_meta "$f" MOD_PROTO)" \
+           "$(mod_meta "$f" MOD_ID)" && ui_ok "правило добавлено" ;;
+      b|B|'') return ;;
+    esac
+  done
+}
+
+# ---------------------------------------------------------- диагностика ---
+# Сверяет конфиг / реально слушающие порты / UFW и показывает расхождения.
+menu_health() {
+  local f name cfg lst fw
+  ui_head "диагностика" "конфиг · порт · firewall"
+
+  ui_section "протоколы"
+  for f in "${MODULES[@]}"; do
+    name=$(mod_meta "$f" MOD_NAME)
+    ui_row "" "$name" "$(mod_call "$f" mod_status)" \
+      "$(mod_meta "$f" MOD_PORT)/$(mod_meta "$f" MOD_PROTO)"
+  done
+
+  ui_section "сервисы"
+  for s in sing-box mihomo mita haproxy caddy packetlab-sub; do
+    systemctl list-unit-files "$s.service" >/dev/null 2>&1 || continue
+    if systemctl is-active --quiet "$s"; then ui_row "" "$s" up ""; else ui_row "" "$s" down ""; fi
+  done
+
+  ui_section "лишние правила UFW"
+  pl_ufw_orphans || ui_note "нет"
+
+  printf '\n'
+  ui_ask "enter" >/dev/null
+}
+
+menu_users()  { :; }   # add / remove / list / links
+menu_sub()    { :; }   # показать ссылку, сменить токен, формат выдачи
+menu_cert()   { :; }   # состояние, принудительное продление, deploy-hook
+menu_sysctl() { :; }   # буферы, bbr+fq, применить/откатить
+
+# ----------------------------------------------------------------- CLI ----
+case "${1:-}" in
+  '')        menu_main ;;
+  status)    menu_health ;;
+  sub)       pl_sub_url ;;
+  link)      for f in "${MODULES[@]}"; do mod_call "$f" mod_link "${2:-uri}"; done ;;
+  *)         ui_err "неизвестная команда: $1"; exit 1 ;;
+esac
