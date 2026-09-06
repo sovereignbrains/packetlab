@@ -217,10 +217,211 @@ menu_health() {
   ui_ask "enter" >/dev/null
 }
 
-menu_users()  { :; }   # add / remove / list / links
-menu_sub()    { :; }   # показать ссылку, сменить токен, формат выдачи
-menu_cert()   { :; }   # состояние, принудительное продление, deploy-hook
-menu_sysctl() { :; }   # буферы, bbr+fq, применить/откатить
+# ------------------------------------------------------- пользователи ----
+# users.json — список объектов {name, sub_token}. Первый в списке владеет
+# подпиской: сервер подписок берёт токен нулевого элемента.
+pl_users_list() {
+  python3 -c "
+import json
+for i,u in enumerate(json.load(open('$PL_USERS')),1):
+    print(i, u.get('name','?'), u.get('sub_token','')[:8]+'…')" 2>/dev/null
+}
+
+menu_users() {
+  local n i name tok
+  while true; do
+    ui_head "пользователи" "подпиской владеет первый в списке"
+    ui_section "список"
+    while read -r i name tok; do
+      ui_row "$i" "$name" up "$tok"
+    done < <(pl_users_list)
+
+    ui_section ""
+    ui_row "1" "добавить" up ""
+    ui_row "2" "удалить"  up ""
+    printf '  %sb%s  назад\n\n' "$C_B" "$C_RST"
+
+    case "$(ui_ask "выбор")" in
+      1) n=$(ui_ask "имя"); [ -z "$n" ] && continue
+         if python3 - "$n" <<'PYADD'
+import json,secrets,sys
+p="/etc/packetlab/users.json"
+d=json.load(open(p))
+if any(u.get("name")==sys.argv[1] for u in d): sys.exit(1)
+d.append({"name":sys.argv[1],"sub_token":secrets.token_hex(16)})
+json.dump(d,open(p,"w"),indent=2,ensure_ascii=False)
+PYADD
+         then ui_ok "добавлен"; pl_sub_reload; else ui_err "имя уже занято"; fi
+         ui_ask "enter" >/dev/null ;;
+      2) n=$(ui_ask "имя"); [ -z "$n" ] && continue
+         if ui_confirm "удалить $n? его токен подписки пропадёт безвозвратно"; then
+           if python3 - "$n" <<'PYDEL'
+import json,sys
+p="/etc/packetlab/users.json"
+d=json.load(open(p))
+if not d or d[0].get("name")==sys.argv[1]: sys.exit(1)
+rest=[u for u in d if u.get("name")!=sys.argv[1]]
+if len(rest)==len(d): sys.exit(1)
+json.dump(rest,open(p,"w"),indent=2,ensure_ascii=False)
+PYDEL
+           then ui_ok "удалён"; pl_sub_reload
+           else ui_err "владельца подписки не удалить, остальных — только существующих"; fi
+         fi
+         ui_ask "enter" >/dev/null ;;
+      b|B|'') return ;;
+    esac
+  done
+}
+
+# ----------------------------------------------------------- подписка ----
+menu_sub() {
+  local url tok code
+  while true; do
+    url=$(pl_sub_url)
+    ui_head "ссылка-подписка" "формат выбирается по User-Agent клиента"
+
+    if [ -n "$url" ]; then
+      printf '\n  %s\n' "$url"
+      ui_note "Karing и sing-box получат JSON, Shadowrocket — base64, остальные — Clash YAML"
+    else
+      ui_err "токен не найден в $PL_USERS"
+    fi
+
+    ui_section ""
+    ui_row "1" "проверить отдачу"     "$(pl_sub_state)" ""
+    ui_row "2" "сменить токен"        up ""
+    ui_row "3" "перезапустить сервер" "$(pl_sub_state)" ""
+    printf '  %sb%s  назад\n\n' "$C_B" "$C_RST"
+
+    case "$(ui_ask "выбор")" in
+      1) # Спрашиваем напрямую у сервера подписок: так проверяется он сам,
+         # без участия DNS, haproxy и Caddy.
+         tok=${url##*/}
+         code=$(curl -s -o /tmp/pl-sub.out -w '%{http_code}' \
+                 -H 'User-Agent: Karing' "http://127.0.0.1:9999/sub/$tok" 2>/dev/null)
+         if [ "$code" = 200 ] && [ -s /tmp/pl-sub.out ]; then
+           ui_ok "200, $(wc -c </tmp/pl-sub.out) байт"
+           ui_note "нод в ответе: $(grep -o '\"tag\"' /tmp/pl-sub.out | wc -l)"
+         else
+           ui_err "сервер подписок ответил $code"
+           ui_note "journalctl -u packetlab-sub -n 20 --no-pager"
+         fi
+         rm -f /tmp/pl-sub.out
+         ui_ask "enter" >/dev/null ;;
+      2) if ui_confirm "сменить токен? старая ссылка сразу перестанет работать"; then
+           if python3 - <<'PYTOK'
+import json,secrets
+p="/etc/packetlab/users.json"
+d=json.load(open(p)); d[0]["sub_token"]=secrets.token_hex(16)
+json.dump(d,open(p,"w"),indent=2,ensure_ascii=False)
+PYTOK
+           then ui_ok "новый токен"; pl_sub_reload; else ui_err "не смог переписать $PL_USERS"; fi
+         fi
+         ui_ask "enter" >/dev/null ;;
+      3) pl_sub_reload; sleep 1
+         systemctl is-active --quiet packetlab-sub && ui_ok "поднят" || ui_err "не поднялся"
+         ui_ask "enter" >/dev/null ;;
+      b|B|'') return ;;
+    esac
+  done
+}
+
+# ---------------------------------------------------------- сертификат ---
+menu_cert() {
+  local l
+  while true; do
+    ui_head "сертификат" "wildcard, DNS-01 через Cloudflare"
+    if [ -f "$PL_CERT" ]; then
+      ui_row "" "$PL_DOMAIN" "$(pl_cert_state)" "$(pl_cert_days)"
+      ui_note "истекает: $(openssl x509 -in "$PL_CERT" -noout -enddate 2>/dev/null | cut -d= -f2)"
+    else
+      ui_err "сертификата нет: $PL_CERT"
+    fi
+
+    ui_section ""
+    ui_row "1" "проверить продление (dry-run)" up ""
+    ui_row "2" "продлить принудительно"        up ""
+    ui_row "3" "показать deploy-hook" \
+      "$([ -x /etc/letsencrypt/renewal-hooks/deploy/packetlab.sh ] && printf up || printf off)" ""
+    printf '  %sb%s  назад\n\n' "$C_B" "$C_RST"
+
+    case "$(ui_ask "выбор")" in
+      1) ui_info "certbot renew --dry-run, около минуты…"
+         if certbot renew --dry-run --cert-name "$PL_DOMAIN" >/tmp/pl-certbot.log 2>&1; then
+           ui_ok "продление пройдёт"
+         else
+           ui_err "не пройдёт, подробности в /tmp/pl-certbot.log"
+           tail -5 /tmp/pl-certbot.log | while read -r l; do ui_note "$l"; done
+         fi
+         ui_ask "enter" >/dev/null ;;
+      2) # Let's Encrypt: 5 дублирующих сертификатов на набор доменов в неделю,
+         # принудительное продление тратит эту квоту.
+         if ui_confirm "тратит недельный лимит Let's Encrypt. продолжить?"; then
+           if certbot renew --force-renewal --cert-name "$PL_DOMAIN" >/tmp/pl-certbot.log 2>&1; then
+             ui_ok "продлён"
+             systemctl restart sing-box 2>/dev/null
+           else
+             ui_err "не вышло, подробности в /tmp/pl-certbot.log"
+             tail -5 /tmp/pl-certbot.log | while read -r l; do ui_note "$l"; done
+           fi
+         fi
+         ui_ask "enter" >/dev/null ;;
+      3) # sing-box читает сертификат с диска и сам его не перечитывает —
+         # без рестарта после продления всё тихо ляжет через 90 дней.
+         if [ -f /etc/letsencrypt/renewal-hooks/deploy/packetlab.sh ]; then
+           while read -r l; do ui_note "$l"; done < /etc/letsencrypt/renewal-hooks/deploy/packetlab.sh
+         else
+           ui_err "хука нет — sing-box не перезапустится после продления"
+         fi
+         ui_ask "enter" >/dev/null ;;
+      b|B|'') return ;;
+    esac
+  done
+}
+
+# --------------------------------------------------------- тюнинг ядра ---
+PL_SYSCTL=/etc/sysctl.d/99-packetlab.conf
+
+menu_sysctl() {
+  local r w q c
+  while true; do
+    r=$(sysctl -n net.core.rmem_max 2>/dev/null || echo 0)
+    w=$(sysctl -n net.core.wmem_max 2>/dev/null || echo 0)
+    q=$(sysctl -n net.core.default_qdisc 2>/dev/null || echo '?')
+    c=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo '?')
+
+    ui_head "тюнинг ядра" "буферы UDP · bbr + fq"
+    ui_row "" "rmem_max" "$([ "$r" -ge 16777216 ] && printf up || printf off)" "$r"
+    ui_row "" "wmem_max" "$([ "$w" -ge 16777216 ] && printf up || printf off)" "$w"
+    ui_row "" "qdisc"    "$([ "$q" = fq ] && printf up || printf off)"  "$q"
+    ui_row "" "congestion" "$([ "$c" = bbr ] && printf up || printf off)" "$c"
+    ui_row "" "файл"     "$([ -f "$PL_SYSCTL" ] && printf up || printf off)" "$PL_SYSCTL"
+
+    ui_section ""
+    ui_row "1" "применить заново" up ""
+    ui_row "2" "убрать тюнинг"    up ""
+    printf '  %sb%s  назад\n\n' "$C_B" "$C_RST"
+
+    case "$(ui_ask "выбор")" in
+      1) if [ -f "$PL_SYSCTL" ]; then
+           sysctl -p "$PL_SYSCTL" >/dev/null 2>&1
+           [ "$(pl_sysctl_state)" = up ] \
+             && ui_ok "применено" \
+             || ui_warn "применилось не полностью — проверь, есть ли bbr в ядре"
+         else
+           ui_err "нет $PL_SYSCTL — перезапусти install.sh"
+         fi
+         ui_ask "enter" >/dev/null ;;
+      2) # sysctl не откатывает уже применённое: значения по умолчанию
+         # вернутся только после перезагрузки.
+         if ui_confirm "удалить $PL_SYSCTL? текущие значения доживут до перезагрузки"; then
+           rm -f "$PL_SYSCTL" && ui_ok "файл удалён"
+         fi
+         ui_ask "enter" >/dev/null ;;
+      b|B|'') return ;;
+    esac
+  done
+}
 
 # ----------------------------------------------------------------- CLI ----
 case "${1:-}" in
