@@ -87,8 +87,30 @@ ok "токен принят"
 # --------------------------------------------------------------- пакеты ---
 head_ "пакеты"
 export DEBIAN_FRONTEND=noninteractive
+export NEEDRESTART_MODE=a          # не спрашивать, какие сервисы перезапустить
 say "apt update…"
 apt-get update -qq || die "apt update не прошёл"
+
+# Обновление системы — только по явному запросу: PL_UPGRADE=1.
+# На работающем стеке upgrade может дёрнуть haproxy/openssl и перезапустить
+# сервисы, поэтому по умолчанию не трогаем.
+if [ "${PL_UPGRADE:-0}" = 1 ]; then
+  pending=$(apt-get -s upgrade 2>/dev/null | grep -c '^Inst ')
+  if [ "${pending:-0}" -eq 0 ]; then
+    ok "система актуальна"
+  else
+    say "обновляю систему: пакетов к обновлению — $pending…"
+    apt-get upgrade -y -qq \
+      -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold \
+      >/dev/null 2>&1 && ok "система обновлена" || warn "часть пакетов не обновилась, продолжаю"
+  fi
+else
+  pending=$(apt-get -s upgrade 2>/dev/null | grep -c '^Inst ')
+  [ "${pending:-0}" -gt 0 ] \
+    && say "доступно обновлений: $pending (PL_UPGRADE=1 — обновить)" \
+    || ok "система актуальна"
+fi
+
 apt-get install -y -qq \
   curl ca-certificates gnupg jq openssl ufw haproxy python3 python3-venv \
   certbot python3-certbot-dns-cloudflare dnsutils iproute2 >/dev/null \
@@ -349,6 +371,13 @@ systemctl is-active --quiet packetlab-sub && ok "сервер подписок �
   || warn "packetlab-sub не поднялся: journalctl -u packetlab-sub"
 
 # ----------------------------------------------------------------- итог ---
+# Ядро могло обновиться при PL_UPGRADE=1 — перезагружать сервер сами не будем.
+run_kern=$(uname -r)
+new_kern=$(ls -1 /boot/vmlinuz-* 2>/dev/null | sed 's|.*/vmlinuz-||' | sort -V | tail -1)
+if [ -n "$new_kern" ] && [ "$new_kern" != "$run_kern" ]; then
+  warn "ядро обновлено: работает $run_kern, установлено $new_kern — нужна перезагрузка"
+fi
+
 head_ "готово" "протоколы ставятся из меню"
 printf '  %sпроверь, что A-запись %s → %s уже есть%s\n' "$C_GRY" "$DOMAIN" "$SERVER_IP" "$C_RST"
 printf '  %sподдомены протоколов создадутся автоматически%s\n\n' "$C_GRY" "$C_RST"
