@@ -84,6 +84,18 @@ if ! curl -fsS -H "Authorization: Bearer $CF_TOKEN" \
 fi
 ok "токен принят"
 
+# A-запись домена. Сертификат выпустится и без неё (DNS-01), но клиент
+# в такой сервер не попадёт — предупреждаем до, а не после установки.
+resolved=$(getent ahostsv4 "$DOMAIN" 2>/dev/null | awk 'NR==1{print $1}')
+if [ -z "$resolved" ]; then
+  warn "A-запись $DOMAIN не резолвится — создай её на $SERVER_IP"
+elif [ "$resolved" != "$SERVER_IP" ]; then
+  warn "$DOMAIN указывает на $resolved, а сервер — $SERVER_IP"
+  warn "если запись проксируется Cloudflare, переключи её в DNS only"
+else
+  ok "A-запись $DOMAIN → $SERVER_IP"
+fi
+
 # --------------------------------------------------------------- пакеты ---
 head_ "пакеты"
 export DEBIAN_FRONTEND=noninteractive
@@ -341,6 +353,34 @@ if [ ! -f "$PL_ETC/meta.json" ]; then
 }
 META
   chmod 600 "$PL_ETC/meta.json"
+else
+  # Файл уже есть: обновляем то, что задано этим запуском (домен мог
+  # смениться), остальные ключи — reality_target и прочее — не трогаем.
+  old_domain=$(PL_ETC="$PL_ETC" python3 -c "import json,os;print(json.load(open(os.environ['PL_ETC']+'/meta.json')).get('domain',''))" 2>/dev/null)
+  if DOMAIN="$DOMAIN" PL_USER="$PL_USER" SERVER_IP="$SERVER_IP" \
+     CF_TOKEN="$CF_TOKEN" CF_ZONE="$CF_ZONE" PL_ETC="$PL_ETC" python3 - <<'PYMETA'
+import json, os
+p = os.environ['PL_ETC'] + '/meta.json'
+m = json.load(open(p))
+m.update({
+    'domain':   os.environ['DOMAIN'],
+    'user':     os.environ['PL_USER'],
+    'ip':       os.environ['SERVER_IP'],
+    'cf_token': os.environ['CF_TOKEN'],
+    'cf_zone':  os.environ['CF_ZONE'],
+})
+json.dump(m, open(p, 'w'), indent=2, ensure_ascii=False)
+PYMETA
+  then
+    chmod 600 "$PL_ETC/meta.json"
+    if [ -n "$old_domain" ] && [ "$old_domain" != "$DOMAIN" ]; then
+      ok "состояние обновлено: домен $old_domain → $DOMAIN"
+      warn "поддомены протоколов на $old_domain остались в Cloudflare — почисти вручную"
+      warn "старый сертификат: certbot delete --cert-name $old_domain"
+    fi
+  else
+    warn "не смог обновить $PL_ETC/meta.json — проверь файл вручную"
+  fi
 fi
 
 if [ ! -f "$PL_ETC/users.json" ]; then
