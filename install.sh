@@ -37,7 +37,7 @@ head_() {
 }
 ask() {
   local p="$1" d="${2:-}" a
-  if [ -n "$d" ]; then printf '  ? %s [%s] ' "$p" "$d"; else printf '  ? %s ' "$p"; fi
+  if [ -n "$d" ]; then printf '  ? %s [%s] ' "$p" "$d" >&2; else printf '  ? %s ' "$p" >&2; fi
   read -r a </dev/tty
   printf '%s' "${a:-$d}"
 }

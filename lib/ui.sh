@@ -101,11 +101,11 @@ ui_note() { printf '    %s%s%s\n' "$C_GRY" "$*" "$C_RST"; }
 ui_ask() {
   local prompt="$1" def="${2:-}" ans
   if [ -n "$def" ]; then
-    printf '  %s?%s %s %s[%s]%s ' "$C_MAG" "$C_RST" "$prompt" "$C_GRY" "$def" "$C_RST"
+    printf '  %s?%s %s %s[%s]%s ' "$C_MAG" "$C_RST" "$prompt" "$C_GRY" "$def" "$C_RST" >&2
   else
-    printf '  %s?%s %s ' "$C_MAG" "$C_RST" "$prompt"
+    printf '  %s?%s %s ' "$C_MAG" "$C_RST" "$prompt" >&2
   fi
-  read -r ans
+  read -r ans </dev/tty
   printf '%s' "${ans:-$def}"
 }
 
