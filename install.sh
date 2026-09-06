@@ -200,10 +200,19 @@ fi
 # sing-box читает сертификат с диска и не перечитывает его сам —
 # после продления нужен рестарт, иначе через 90 дней всё тихо ляжет.
 install -d /etc/letsencrypt/renewal-hooks/deploy
-cat > /etc/letsencrypt/renewal-hooks/deploy/packetlab.sh <<'HOOK'
+cat > /etc/letsencrypt/renewal-hooks/deploy/packetlab.sh <<HOOK
 #!/bin/sh
+# Caddy работает не от root и приватный ключ в /etc/letsencrypt (0600 root)
+# прочитать не может — держим для него копию с правами группы caddy.
+d=/var/lib/packetlab/certs
+install -d -m 750 "\$d"
+cp -L /etc/letsencrypt/live/$DOMAIN/fullchain.pem "\$d/fullchain.pem" 2>/dev/null
+cp -L /etc/letsencrypt/live/$DOMAIN/privkey.pem   "\$d/privkey.pem"   2>/dev/null
+chgrp caddy "\$d" "\$d"/*.pem 2>/dev/null
+chmod 640 "\$d"/*.pem 2>/dev/null
 systemctl restart sing-box 2>/dev/null
 systemctl reload haproxy 2>/dev/null
+systemctl reload caddy 2>/dev/null
 exit 0
 HOOK
 chmod +x /etc/letsencrypt/renewal-hooks/deploy/packetlab.sh
@@ -283,6 +292,11 @@ p{color:#7d8590;font-size:.875rem;margin:0}</style></head>
 <body><main><h1>All systems operational</h1><p>Nothing to see here.</p></main></body></html>
 HTML
 
+# haproxy отдаёт сюда TLS как есть, не расшифровывая (иначе сломался бы
+# REALITY), поэтому терминировать соединение обязан сам Caddy — иначе клиент
+# здоровается TLS с открытым HTTP и получает ошибку рукопожатия.
+/etc/letsencrypt/renewal-hooks/deploy/packetlab.sh >/dev/null 2>&1
+
 cat > /etc/caddy/Caddyfile <<CADDY
 {
     admin off
@@ -290,6 +304,8 @@ cat > /etc/caddy/Caddyfile <<CADDY
 }
 
 :8080 {
+    tls /var/lib/packetlab/certs/fullchain.pem /var/lib/packetlab/certs/privkey.pem
+
     root * /var/www/decoy
     file_server
 
@@ -300,8 +316,13 @@ cat > /etc/caddy/Caddyfile <<CADDY
 }
 CADDY
 systemctl enable --now caddy >/dev/null 2>&1
-systemctl reload caddy >/dev/null 2>&1
-ok "decoy на 8080, /sub/* → 9999"
+systemctl restart caddy >/dev/null 2>&1
+sleep 1
+if systemctl is-active --quiet caddy; then
+  ok "decoy на 8080 (TLS), /sub/* → 9999"
+else
+  warn "caddy не поднялся: journalctl -u caddy -n 20 --no-pager"
+fi
 
 # -------------------------------------------------------------- sing-box -
 head_ "sing-box" "пустой конфиг, инбаунды добавит меню"
