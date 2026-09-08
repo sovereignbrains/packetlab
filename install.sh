@@ -410,7 +410,7 @@ get lib/ui.sh              "$PL_ROOT/lib/ui.sh"
 get lib/core.sh            "$PL_ROOT/lib/core.sh"
 get lib/state.sh           "$PL_ROOT/lib/state.sh"
 get sub/packetlab-sub.py   "$PL_ROOT/sub/packetlab-sub.py"
-for m in reality tuic anytls naive hy2 mieru; do
+for m in reality tuic anytls naive hy2 mieru ech; do
   get "modules/$m.sh" "$PL_ROOT/modules/$m.sh"
 done
 chmod +x "$PL_ROOT/packetlab" "$PL_ROOT/sub/packetlab-sub.py"
