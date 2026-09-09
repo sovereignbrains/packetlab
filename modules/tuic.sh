@@ -36,6 +36,8 @@ mod_status() {
     printf 'down'
   elif [ "$fw" = no ]; then
     printf 'blocked'
+  elif ! pl_meta_has tuic_uuid; then
+    printf 'broken'
   else
     printf 'up'
   fi

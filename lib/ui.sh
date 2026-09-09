@@ -60,6 +60,7 @@ ui_badge() {
     blocked) printf '%s▲%s %sfw%s'      "$C_YLW" "$C_RST" "$C_YLW" "$C_RST" ;;
     down)    printf '%s●%s %sdown%s'    "$C_RED" "$C_RST" "$C_RED" "$C_RST" ;;
     off)     printf '%s○%s %soff%s'     "$C_GRY" "$C_RST" "$C_GRY" "$C_RST" ;;
+    broken)  printf '%s▲%s %sbroken%s'  "$C_RED" "$C_RST" "$C_RED" "$C_RST" ;;
     *)       printf '%s?%s'             "$C_GRY" "$C_RST" ;;
   esac
 }

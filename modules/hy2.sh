@@ -10,6 +10,7 @@ mod_status() {
   pl_singbox_has_tag "${MOD_ID}-in" || { printf off; return; }
   pl_port_listening "$MOD_PORT" udp || { printf down; return; }
   pl_ufw_allows "$MOD_PORT" udp || { printf blocked; return; }
+  pl_meta_has hy2_pass || { printf broken; return; }
   printf up
 }
 

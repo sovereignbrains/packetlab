@@ -13,6 +13,7 @@ mod_status() {
   mita describe config 2>/dev/null | grep -q "$MOD_PORT" || { printf off; return; }
   pl_port_listening "$MOD_PORT" tcp || { printf down; return; }
   pl_ufw_allows "$MOD_PORT" tcp || { printf blocked; return; }
+  pl_meta_has mieru_pass || { printf broken; return; }
   printf up
 }
 

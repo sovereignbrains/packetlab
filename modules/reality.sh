@@ -11,6 +11,8 @@ mod_status() {
   pl_singbox_has_tag "${MOD_ID}-in" || { printf off; return; }
   pl_port_listening "$MOD_PORT" tcp || { printf down; return; }
   pl_ufw_allows 443 tcp || { printf blocked; return; }
+  pl_haproxy_has_backend "$MOD_ID" || { printf broken; return; }
+  pl_meta_has reality_uuid || { printf broken; return; }
   printf up
 }
 
