@@ -101,12 +101,32 @@ ui_note() { printf '    %s%s%s\n' "$C_GRY" "$*" "$C_RST"; }
 ui_ask() {
   local prompt="$1" def="${2:-}" ans
   if [ -n "$def" ]; then
-    printf '  %s?%s %s %s[%s]%s ' "$C_MAG" "$C_RST" "$prompt" "$C_GRY" "$def" "$C_RST" >&2
+    printf '  %s?%s %s %s[%s]%s\n' "$C_MAG" "$C_RST" "$prompt" "$C_GRY" "$def" "$C_RST" >&2
   else
-    printf '  %s?%s %s ' "$C_MAG" "$C_RST" "$prompt" >&2
+    printf '  %s?%s %s\n' "$C_MAG" "$C_RST" "$prompt" >&2
   fi
+  # Ввод на отдельной строке: Backspace не умеет подниматься на строку выше,
+  # поэтому ни приглашение, ни меню стереть нельзя.
+  printf '  %s>%s ' "$C_MAG" "$C_RST" >&2
   read -r ans </dev/tty
-  printf '%s' "${ans:-$def}"
+  ans="${ans:-$def}"
+  # Однобуквенный ответ в русской раскладке приводим к латинице по позиции
+  # клавиши: пользователь видит «с», жмёт пункт «c» — должно сработать.
+  if [ "${#ans}" = 1 ]; then
+    case "$ans" in
+      й) ans=q ;; ц) ans=w ;; у) ans=e ;; к) ans=r ;; е) ans=t ;; н) ans=y ;;
+      г) ans=u ;; ш) ans=i ;; щ) ans=o ;; з) ans=p ;; ф) ans=a ;; ы) ans=s ;;
+      в) ans=d ;; а) ans=f ;; п) ans=g ;; р) ans=h ;; о) ans=j ;; л) ans=k ;;
+      д) ans=l ;; я) ans=z ;; ч) ans=x ;; с) ans=c ;; м) ans=v ;; и) ans=b ;;
+      т) ans=n ;; ь) ans=m ;;
+      Й) ans=q ;; Ц) ans=w ;; У) ans=e ;; К) ans=r ;; Е) ans=t ;; Н) ans=y ;;
+      Г) ans=u ;; Ш) ans=i ;; Щ) ans=o ;; З) ans=p ;; Ф) ans=a ;; Ы) ans=s ;;
+      В) ans=d ;; А) ans=f ;; П) ans=g ;; Р) ans=h ;; О) ans=j ;; Л) ans=k ;;
+      Д) ans=l ;; Я) ans=z ;; Ч) ans=x ;; С) ans=c ;; М) ans=v ;; И) ans=b ;;
+      Т) ans=n ;; Ь) ans=m ;;
+    esac
+  fi
+  printf '%s' "$ans"
 }
 
 # ui_confirm <вопрос> — по умолчанию НЕТ. Для разрушительных операций.

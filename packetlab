@@ -283,7 +283,7 @@ menu_sub() {
 
     if [ -n "$url" ]; then
       printf '\n  %s\n' "$url"
-      ui_note "Karing и sing-box получат JSON, Shadowrocket — base64, остальные — Clash YAML"
+      ui_note "Karing получит JSON со всеми протоколами, sing-box и прочие — без Mieru"
     else
       ui_err "токен не найден в $PL_USERS"
     fi
