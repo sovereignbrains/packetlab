@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """packetlab — сервер подписок.
 
-Одна ссылка, три формата. Клиент определяется по User-Agent:
+Одна ссылка, два режима sing-box JSON. Клиент определяется по User-Agent:
 
-  Karing / sing-box  → sing-box JSON  (влезает всё, включая Naive и Mieru)
-  Shadowrocket / v2ray → base64-список URI
-  всё остальное      → Clash YAML
+  Karing / Hiddify → полный набор, включая Mieru (эти клиенты его понимают)
+  sing-box / всё остальное (незнакомый UA) → без Mieru — апстримный клиент
+                                              падает на неизвестном outbound
 
 Ноды не хардкодятся: скрипт спрашивает их у модулей `packetlab`, поэтому
 добавление протокола не требует правки этого файла.
@@ -52,22 +52,34 @@ def ask_module(mod: Path, fmt: str) -> str:
     return _run_module(mod, f"mod_link {fmt}")
 
 
+def engine(mod: Path) -> str:
+    """MOD_ENGINE модуля: sing-box, mita и т.п."""
+    for line in mod.read_text(errors="replace").splitlines():
+        if line.startswith("MOD_ENGINE="):
+            return line.split("=", 1)[1].strip().strip('"\'')
+    return ""
+
+
 def detect(ua: str) -> str:
     ua = (ua or "").lower()
-    if any(k in ua for k in ("karing", "sing-box", "singbox", "hiddify")):
+    # Karing/Hiddify — форки с расширенным набором протоколов, им отдаём всё.
+    if any(k in ua for k in ("karing", "hiddify")):
         return "singbox"
-    if any(k in ua for k in ("shadowrocket", "v2ray", "v2box", "streisand")):
-        return "uri"
-    return "clash"
+    # Апстримный sing-box не знает mieru и падает на неизвестном outbound.
+    if any(k in ua for k in ("sing-box", "singbox")):
+        return "singbox_strict"
+    return "singbox_strict"
 
 
 def build(fmt: str) -> tuple[bytes, str]:
-    parts = [ask_module(m, fmt) for m in modules() if installed(m)]
+    strict = fmt == "singbox_strict"
+    if strict:
+        fmt = "singbox"
+    mods = [m for m in modules() if installed(m)]
+    if strict:
+        mods = [m for m in mods if engine(m) == "sing-box"]
+    parts = [ask_module(m, fmt) for m in mods]
     parts = [p for p in parts if p]
-
-    if fmt == "uri":
-        body = base64.b64encode("\n".join(parts).encode()).decode()
-        return body.encode(), "text/plain; charset=utf-8"
 
     if fmt == "singbox":
         # Один сломанный модуль не должен ронять всю подписку.
@@ -78,40 +90,41 @@ def build(fmt: str) -> tuple[bytes, str]:
             except json.JSONDecodeError:
                 continue
         tags = [o["tag"] for o in outs]
+        own_hosts = sorted({o["server"] for o in outs if o.get("server")})
+        cfg_dns = {
+            "servers": [
+                {"type": "tls", "tag": "remote", "server": "1.1.1.1", "detour": "proxy"},
+                {"type": "local", "tag": "local"},
+            ],
+            "rules": ([{"domain": own_hosts, "server": "local"}] if own_hosts else []),
+            "final": "remote",
+            "strategy": "ipv4_only",
+        }
         cfg = {
             "log": {"level": "warn", "timestamp": True},
-            "dns": {
-                "servers": [
-                    {"tag": "remote", "address": "tls://1.1.1.1", "detour": "select"},
-                    {"tag": "local", "address": "local", "detour": "direct"},
-                ],
-                "final": "remote",
-            },
+            "dns": cfg_dns,
+            "inbounds": [
+                {"type": "tun", "tag": "tun-in", "address": ["172.19.0.1/30"],
+                 "auto_route": True, "strict_route": True, "stack": "mixed"},
+                {"type": "mixed", "tag": "mixed-in",
+                 "listen": "127.0.0.1", "listen_port": 2080},
+            ],
             "outbounds": (
                 [{
-                    "type": "urltest", "tag": "select", "outbounds": tags,
+                    "type": "selector", "tag": "proxy",
+                    "outbounds": ["auto"] + tags, "default": "auto",
+                }, {
+                    "type": "urltest", "tag": "auto", "outbounds": tags,
                     "url": "https://www.gstatic.com/generate_204",
                     "interval": "3m", "tolerance": 50,
                 }]
                 + outs
                 + [{"type": "direct", "tag": "direct"}]
             ),
-            "route": {"final": "select", "auto_detect_interface": True},
+            "route": {"final": "proxy", "auto_detect_interface": True,
+                      "default_domain_resolver": {"server": "local"}},
         }
         return json.dumps(cfg, indent=2, ensure_ascii=False).encode(), "application/json"
-
-    # clash
-    body = "proxies:\n" + "\n".join(parts) + "\n"
-    names = []
-    for p in parts:
-        for line in p.splitlines():
-            if line.startswith("- name:"):
-                names.append(line.split(":", 1)[1].strip())
-    body += "proxy-groups:\n- name: SERVER\n  type: url-test\n"
-    body += "  url: https://www.gstatic.com/generate_204\n  interval: 180\n  proxies:\n"
-    body += "".join(f"  - {n}\n" for n in names)
-    body += "rules:\n- MATCH,SERVER\n"
-    return body.encode(), "text/yaml; charset=utf-8"
 
 
 class Handler(BaseHTTPRequestHandler):

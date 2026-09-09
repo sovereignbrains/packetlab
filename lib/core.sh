@@ -136,7 +136,8 @@ pl_ufw_orphans() {
 pl_haproxy_add_sni() {
   local sni="$1" backend="$2" port="$3"
   grep -q "packetlab:${backend}" "$PL_HAP" 2>/dev/null && return 0
-  cp -a "$PL_HAP" "$PL_HAP.bak-$(date +%s)"
+  local bak="$PL_HAP.bak-$(date +%s)"
+  cp -a "$PL_HAP" "$bak"
   python3 - "$sni" "$backend" "$port" <<'PY'
 import sys
 p="/etc/haproxy/haproxy.cfg"; sni,be,port=sys.argv[1:4]
@@ -146,13 +147,15 @@ block=f"\nbackend {be}  # packetlab:{be}\n    mode tcp\n    server {be} 127.0.0.
 s=s.replace("    default_backend", rule+"    default_backend",1)
 open(p,"w").write(s+block)
 PY
-  haproxy -c -f "$PL_HAP" >/dev/null 2>&1 || { ui_err "haproxy.cfg невалиден"; return 1; }
+  haproxy -c -f "$PL_HAP" >/dev/null 2>&1 \
+    || { cp -a "$bak" "$PL_HAP"; ui_err "haproxy.cfg невалиден, откатил"; return 1; }
   systemctl reload haproxy
 }
 
 pl_haproxy_del_sni() {
   local backend="$1"
-  cp -a "$PL_HAP" "$PL_HAP.bak-$(date +%s)"
+  local bak="$PL_HAP.bak-$(date +%s)"
+  cp -a "$PL_HAP" "$bak"
   python3 - "$backend" <<'PY'
 import sys,re
 p="/etc/haproxy/haproxy.cfg"; be=sys.argv[1]
@@ -165,7 +168,9 @@ for l in lines:
     out.append(l)
 open(p,"w").write("\n".join(out))
 PY
-  haproxy -c -f "$PL_HAP" >/dev/null 2>&1 && systemctl reload haproxy
+  haproxy -c -f "$PL_HAP" >/dev/null 2>&1 \
+    || { cp -a "$bak" "$PL_HAP"; ui_err "haproxy.cfg невалиден, откатил"; return 1; }
+  systemctl reload haproxy
 }
 
 # ------------------------------------------------------------------ dns ---

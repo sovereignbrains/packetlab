@@ -50,7 +50,7 @@ print(json.dumps({'type':'HTTPS','name':sys.argv[1],'ttl':300,
 }
 
 mod_install() {
-  pl_singbox_has_tag "${MOD_ID}-in" && { ui_warn "$MOD_NAME уже установлен"; return 0; }
+  pl_singbox_has_tag "${MOD_ID}-in" && { ui_err "инбаунд ${MOD_ID}-in уже есть — сначала удалить"; return 1; }
   local pass target cert key
   target=$(pl_meta_get ech_domain); [ -z "$target" ] && target=edgevanga.xyz
   pass=$(pl_secret)

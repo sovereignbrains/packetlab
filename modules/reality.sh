@@ -15,7 +15,7 @@ mod_status() {
 }
 
 mod_install() {
-  pl_singbox_has_tag "${MOD_ID}-in" && { ui_warn "$MOD_NAME уже установлен"; return 0; }
+  pl_singbox_has_tag "${MOD_ID}-in" && { ui_err "инбаунд ${MOD_ID}-in уже есть — сначала удалить"; return 1; }
   local uuid target kp priv pub sid
   uuid=$(pl_uuid)
   target=$(pl_meta_get reality_target); [ -z "$target" ] && target=www.bing.com

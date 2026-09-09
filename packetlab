@@ -174,7 +174,8 @@ menu_module() {
          fi
          ui_ask "enter" >/dev/null ;;
       2) ui_confirm "переустановить $name? текущие ключи будут заменены" \
-           && { mod_call "$f" mod_remove
+           && { mod_call "$f" mod_remove \
+                || { ui_err "удаление не удалось, установка отменена"; ui_ask "enter" >/dev/null; continue; }
                 if pl_preflight "$f"; then
                   mod_call "$f" mod_install && pl_postflight "$f"
                 else

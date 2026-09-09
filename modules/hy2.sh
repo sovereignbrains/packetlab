@@ -16,7 +16,7 @@ mod_status() {
 # up_mbps/down_mbps намеренно не задаются: с ними включается Brutal, который
 # игнорирует сигналы перегрузки. По умолчанию работает BBR.
 mod_install() {
-  pl_singbox_has_tag "${MOD_ID}-in" && { ui_warn "$MOD_NAME уже установлен"; return 0; }
+  pl_singbox_has_tag "${MOD_ID}-in" && { ui_err "инбаунд ${MOD_ID}-in уже есть — сначала удалить"; return 1; }
   local pass; pass=$(pl_secret)
   pl_singbox_add_inbound "$(cat <<JSON
 { "type":"hysteria2","tag":"${MOD_ID}-in","listen":"::","listen_port":${MOD_PORT},
