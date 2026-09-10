@@ -1,0 +1,629 @@
+diff --git a/install.sh b/install.sh
+index ba00938..52595af 100644
+--- a/install.sh
++++ b/install.sh
+@@ -42,6 +42,17 @@ ask() {
+   printf '%s' "${a:-$d}"
+ }
+ 
++# То же самое, но без эха ввода на экран — для токенов и прочих секретов,
++# которые иначе остаются в scrollback терминала (и в логах терминальных
++# клиентов вроде Termius).
++ask_secret() {
++  local p="$1" a
++  printf '  ? %s (ввод скрыт) ' "$p" >&2
++  read -rs a </dev/tty
++  printf '\n' >&2
++  printf '%s' "$a"
++}
++
+ # --------------------------------------------------------------- проверки -
+ [ "$(id -u)" -eq 0 ] || die "нужен root"
+ 
+@@ -56,6 +67,29 @@ fi
+ 
+ head_ "packetlab" "установка с нуля · $(date +%F)"
+ 
++# --------------------------------------------------------------- ветка ---
++# PL_BRANCH можно передать явно (nodomain|domain|advanced) для неинтерактивных
++# разворотов. Не задан — спрашиваем и объясняем последствия каждого выбора
++# на первом же экране, а не постфактум.
++PL_BRANCH="${PL_BRANCH:-}"
++if [ -z "$PL_BRANCH" ]; then
++  cat <<TXT
++
++  1) без домена   — только REALITY и/или Mieru. Ни сертификата, ни
++                     Cloudflare, ни decoy-сайта: REALITY слушает 443
++                     напрямую, маскировка — только его собственная.
++  2) с доменом     — AnyTLS и/или Naive поверх честного сертификата,
++                     decoy-сайт, haproxy мультиплексирует 443 по SNI.
++  3) продвинутая   — то же что «с доменом», плюс ручной выбор SNI-донора,
++                     портов, обфускации Mieru, MTU.
++TXT
++  case "$(ask 'вариант (1/2/3)' 2)" in
++    1) PL_BRANCH=nodomain ;;
++    3) PL_BRANCH=advanced ;;
++    *) PL_BRANCH=domain ;;
++  esac
++fi
++
+ # ---------------------------------------------------------------- ввод ----
+ # Всё, что передано в окружении, не спрашивается. Позволяет разворачивать
+ # несколько серверов одной командой без интерактива:
+@@ -66,34 +100,63 @@ CF_ZONE="${PL_CF_ZONE:-}"
+ PL_USER="${PL_USER:-Boss}"     # метка пользователя внутри инбаундов,
+                                # в именах нод не используется
+ 
+-[ -n "$DOMAIN" ]   || DOMAIN=$(ask "домен (без поддомена)")
+-[ -n "$DOMAIN" ]   || die "домен обязателен"
+-[ -n "$CF_TOKEN" ] || CF_TOKEN=$(ask "Cloudflare API token (Zone:DNS:Edit)")
+-[ -n "$CF_TOKEN" ] || die "токен обязателен для DNS-01"
+-[ -n "$CF_ZONE" ]  || CF_ZONE=$(ask "Cloudflare Zone ID")
++if [ "$PL_BRANCH" = nodomain ]; then
++  DOMAIN=""; CF_TOKEN=""; CF_ZONE=""
++  say "без домена: сертификат, Cloudflare и decoy-сайт пропускаются"
++else
++  [ -n "$DOMAIN" ] || DOMAIN=$(ask "домен (без поддомена)")
++  [ -n "$DOMAIN" ] || die "домен обязателен для этой ветки"
++
++  if [ -z "$CF_TOKEN" ]; then
++    cat <<TXT
++
++  Сертификат — wildcard через DNS-01, нужна TXT-запись для проверки.
++  Поддомены протоколов (anytls.$DOMAIN и т.п.) появятся позже, по мере
++  установки протоколов — им тоже нужны A-записи. Кто их заводит:
++
++  1) сам, вручную    — certbot напечатает TXT-запись и подождёт, пока
++                        добавишь её сам; A-записи протоколов тоже
++                        придётся заводить самому по ходу дела
++  2) Cloudflare API   — нужен токен (Zone:DNS:Edit), дальше всё
++                        заводится автоматически, включая новые протоколы
++TXT
++    if [ "$(ask 'вариант (1/2)' 2)" = 1 ]; then
++      CF_TOKEN=""
++    else
++      CF_TOKEN=$(ask_secret "Cloudflare API token (Zone:DNS:Edit)")
++    fi
++  fi
++  [ -n "$CF_TOKEN" ] && [ -z "$CF_ZONE" ] && CF_ZONE=$(ask "Cloudflare Zone ID")
++fi
+ 
+ SERVER_IP=$(curl -fsS --max-time 10 https://api.ipify.org 2>/dev/null || hostname -I | awk '{print $1}')
+ say "внешний IP: $SERVER_IP"
+ 
+-# Токены при копипасте с телефона регулярно теряют последний символ —
+-# проверяем сразу, а не после получаса установки.
+-say "проверяю токен…"
+-if ! curl -fsS -H "Authorization: Bearer $CF_TOKEN" \
+-     https://api.cloudflare.com/client/v4/user/tokens/verify 2>/dev/null | grep -q '"success":true'; then
+-  die "Cloudflare отверг токен. Частая причина — при копировании потерялся последний символ."
+-fi
+-ok "токен принят"
+-
+-# A-запись домена. Сертификат выпустится и без неё (DNS-01), но клиент
+-# в такой сервер не попадёт — предупреждаем до, а не после установки.
+-resolved=$(getent ahostsv4 "$DOMAIN" 2>/dev/null | awk 'NR==1{print $1}')
+-if [ -z "$resolved" ]; then
+-  warn "A-запись $DOMAIN не резолвится — создай её на $SERVER_IP"
+-elif [ "$resolved" != "$SERVER_IP" ]; then
+-  warn "$DOMAIN указывает на $resolved, а сервер — $SERVER_IP"
+-  warn "если запись проксируется Cloudflare, переключи её в DNS only"
+-else
+-  ok "A-запись $DOMAIN → $SERVER_IP"
++if [ "$PL_BRANCH" != nodomain ]; then
++  if [ -n "$CF_TOKEN" ]; then
++    # Токены при копипасте с телефона регулярно теряют последний символ —
++    # проверяем сразу, а не после получаса установки.
++    say "проверяю токен…"
++    if ! curl -fsS -H "Authorization: Bearer $CF_TOKEN" \
++         https://api.cloudflare.com/client/v4/user/tokens/verify 2>/dev/null | grep -q '"success":true'; then
++      die "Cloudflare отверг токен. Частая причина — при копировании потерялся последний символ."
++    fi
++    ok "токен принят"
++  else
++    say "без токена: A-записи и продление сертификата — вручную по ходу дела"
++  fi
++
++  # A-запись домена. Сертификат выпустится и без неё (DNS-01 не требует A),
++  # но клиент в такой сервер не попадёт — предупреждаем до, а не после установки.
++  resolved=$(getent ahostsv4 "$DOMAIN" 2>/dev/null | awk 'NR==1{print $1}')
++  if [ -z "$resolved" ]; then
++    warn "A-запись $DOMAIN не резолвится — создай её на $SERVER_IP"
++  elif [ "$resolved" != "$SERVER_IP" ]; then
++    warn "$DOMAIN указывает на $resolved, а сервер — $SERVER_IP"
++    warn "если запись проксируется Cloudflare, переключи её в DNS only"
++  else
++    ok "A-запись $DOMAIN → $SERVER_IP"
++  fi
+ fi
+ 
+ # --------------------------------------------------------------- пакеты ---
+@@ -123,24 +186,30 @@ else
+     || ok "система актуальна"
+ fi
+ 
+-apt-get install -y -qq \
+-  curl ca-certificates gnupg jq openssl ufw haproxy python3 python3-venv \
+-  certbot python3-certbot-dns-cloudflare dnsutils iproute2 >/dev/null \
+-  || die "не смог поставить базовые пакеты"
++PKGS="curl ca-certificates gnupg jq openssl ufw python3 python3-venv dnsutils iproute2 qrencode"
++if [ "$PL_BRANCH" != nodomain ]; then
++  PKGS="$PKGS haproxy certbot python3-certbot-dns-cloudflare"
++fi
++# shellcheck disable=SC2086
++apt-get install -y -qq $PKGS >/dev/null || die "не смог поставить базовые пакеты"
+ ok "базовые пакеты"
+ 
+-# Caddy живёт в собственном репозитории — в Debian он есть не всегда.
+-if ! command -v caddy >/dev/null; then
+-  if ! apt-get install -y -qq caddy >/dev/null 2>&1; then
+-    say "подключаю репозиторий Caddy…"
+-    curl -fsSL https://dl.cloudsmith.io/public/caddy/stable/gpg.key \
+-      | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+-    curl -fsSL https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt \
+-      > /etc/apt/sources.list.d/caddy-stable.list
+-    apt-get update -qq && apt-get install -y -qq caddy >/dev/null || die "Caddy не встал"
++if [ "$PL_BRANCH" != nodomain ]; then
++  # Caddy живёт в собственном репозитории — в Debian он есть не всегда.
++  if ! command -v caddy >/dev/null; then
++    if ! apt-get install -y -qq caddy >/dev/null 2>&1; then
++      say "подключаю репозиторий Caddy…"
++      curl -fsSL https://dl.cloudsmith.io/public/caddy/stable/gpg.key \
++        | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
++      curl -fsSL https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt \
++        > /etc/apt/sources.list.d/caddy-stable.list
++      apt-get update -qq && apt-get install -y -qq caddy >/dev/null || die "Caddy не встал"
++    fi
+   fi
++  ok "caddy $(caddy version 2>/dev/null | head -1)"
++else
++  say "без домена: haproxy/certbot/caddy не ставим"
+ fi
+-ok "caddy $(caddy version 2>/dev/null | head -1)"
+ 
+ # ----------------------------------------------------------------- ядра ---
+ # Тянем .deb из GitHub Releases. Версия не фиксируется намеренно: стек
+@@ -179,22 +248,37 @@ else
+     || warn "mihomo не установился — не критично"
+ fi
+ 
++if [ "$PL_BRANCH" != nodomain ]; then
+ # ---------------------------------------------------------- сертификат ----
+ head_ "сертификат" "wildcard через DNS-01"
+-install -d -m 700 /etc/letsencrypt/cloudflare
+-printf 'dns_cloudflare_api_token = %s\n' "$CF_TOKEN" > /etc/letsencrypt/cloudflare/token.ini
+-chmod 600 /etc/letsencrypt/cloudflare/token.ini
+ 
+ if [ -f "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" ]; then
+   ok "сертификат уже выпущен"
+-else
+-  say "запрашиваю (DNS-01 занимает ~1 минуту)…"
++elif [ -n "$CF_TOKEN" ]; then
++  install -d -m 700 /etc/letsencrypt/cloudflare
++  printf 'dns_cloudflare_api_token = %s\n' "$CF_TOKEN" > /etc/letsencrypt/cloudflare/token.ini
++  chmod 600 /etc/letsencrypt/cloudflare/token.ini
++  say "запрашиваю через Cloudflare API (DNS-01 занимает ~1 минуту)…"
+   certbot certonly --non-interactive --agree-tos --register-unsafely-without-email \
+     --dns-cloudflare --dns-cloudflare-credentials /etc/letsencrypt/cloudflare/token.ini \
+     --dns-cloudflare-propagation-seconds 30 \
+     -d "$DOMAIN" -d "*.$DOMAIN" >/dev/null 2>&1 \
+     || die "certbot не смог выпустить сертификат, смотри /var/log/letsencrypt/"
+   ok "выпущен: $DOMAIN + *.$DOMAIN"
++else
++  # Без токена — интерактивный DNS-01: certbot сам печатает TXT-запись
++  # и ждёт Enter. Ему нужен настоящий tty на stdin, а не пайп от curl,
++  # поэтому stdin явно берём с /dev/tty; вывод НЕ прячем — в нём и есть
++  # инструкция.
++  warn "без токена: сейчас certbot попросит добавить TXT-запись вручную"
++  certbot certonly --manual --preferred-challenges dns \
++    --agree-tos --register-unsafely-without-email \
++    -d "$DOMAIN" -d "*.$DOMAIN" < /dev/tty \
++    || die "certbot не смог выпустить сертификат, смотри /var/log/letsencrypt/"
++  ok "выпущен: $DOMAIN + *.$DOMAIN"
++  warn "автопродление НЕ будет работать без токена — certbot.timer не сможет"
++  warn "пройти DNS-01 сам. Через ~60 дней зайди в меню (c) и продли вручную,"
++  warn "либо добавь токен позже: он используется только для DNS, не для TLS."
+ fi
+ 
+ # sing-box читает сертификат с диска и не перечитывает его сам —
+@@ -217,6 +301,7 @@ exit 0
+ HOOK
+ chmod +x /etc/letsencrypt/renewal-hooks/deploy/packetlab.sh
+ ok "deploy-hook на продление"
++fi
+ 
+ # ------------------------------------------------------------- тюнинг ----
+ head_ "тюнинг ядра"
+@@ -242,10 +327,18 @@ ufw --force reset >/dev/null 2>&1
+ ufw default deny incoming >/dev/null
+ ufw default allow outgoing >/dev/null
+ ufw allow OpenSSH >/dev/null
+-ufw allow 443/tcp comment 'packetlab:haproxy' >/dev/null
+-ufw --force enable >/dev/null
+-ok "открыты: SSH, 443/tcp. Порты протоколов откроются при их установке"
++if [ "$PL_BRANCH" != nodomain ]; then
++  ufw allow 443/tcp comment 'packetlab:haproxy' >/dev/null
++  ufw --force enable >/dev/null
++  ok "открыты: SSH, 443/tcp. Порты протоколов откроются при их установке"
++else
++  ufw --force enable >/dev/null
++  ok "открыт: SSH. 443/tcp и остальные порты откроются при установке протоколов"
++fi
+ 
++if [ "$PL_BRANCH" = nodomain ]; then
++  say "без домена: haproxy и decoy-сайт пропускаются — REALITY встанет прямо на 443"
++else
+ # --------------------------------------------------------------- haproxy -
+ head_ "haproxy" "SNI-мультиплексор на 443/tcp"
+ [ -f /etc/haproxy/haproxy.cfg ] && cp -a /etc/haproxy/haproxy.cfg "/etc/haproxy/haproxy.cfg.orig-$(date +%s)"
+@@ -339,6 +432,7 @@ if systemctl is-active --quiet caddy; then
+ else
+   warn "caddy не поднялся: journalctl -u caddy -n 20 --no-pager"
+ fi
++fi
+ 
+ # -------------------------------------------------------------- sing-box -
+ head_ "sing-box" "пустой конфиг, инбаунды добавит меню"
+@@ -423,6 +517,7 @@ if [ ! -f "$PL_ETC/meta.json" ]; then
+   cat > "$PL_ETC/meta.json" <<META
+ {
+   "domain": "$DOMAIN",
++  "branch": "$PL_BRANCH",
+   "user": "$PL_USER",
+   "ip": "$SERVER_IP",
+   "cf_token": "$CF_TOKEN",
+@@ -436,12 +531,13 @@ else
+   # смениться), остальные ключи — reality_target и прочее — не трогаем.
+   old_domain=$(PL_ETC="$PL_ETC" python3 -c "import json,os;print(json.load(open(os.environ['PL_ETC']+'/meta.json')).get('domain',''))" 2>/dev/null)
+   if DOMAIN="$DOMAIN" PL_USER="$PL_USER" SERVER_IP="$SERVER_IP" \
+-     CF_TOKEN="$CF_TOKEN" CF_ZONE="$CF_ZONE" PL_ETC="$PL_ETC" python3 - <<'PYMETA'
++     CF_TOKEN="$CF_TOKEN" CF_ZONE="$CF_ZONE" PL_BRANCH="$PL_BRANCH" PL_ETC="$PL_ETC" python3 - <<'PYMETA'
+ import json, os
+ p = os.environ['PL_ETC'] + '/meta.json'
+ m = json.load(open(p))
+ m.update({
+     'domain':   os.environ['DOMAIN'],
++    'branch':   os.environ['PL_BRANCH'],
+     'user':     os.environ['PL_USER'],
+     'ip':       os.environ['SERVER_IP'],
+     'cf_token': os.environ['CF_TOKEN'],
+@@ -468,7 +564,8 @@ if [ ! -f "$PL_ETC/users.json" ]; then
+ fi
+ ok "состояние в $PL_ETC"
+ 
+-cat > /etc/systemd/system/packetlab-sub.service <<UNIT
++if [ "$PL_BRANCH" != nodomain ]; then
++  cat > /etc/systemd/system/packetlab-sub.service <<UNIT
+ [Unit]
+ Description=packetlab subscription server
+ After=network.target
+@@ -482,11 +579,14 @@ RestartSec=3
+ [Install]
+ WantedBy=multi-user.target
+ UNIT
+-systemctl daemon-reload
+-systemctl enable --now packetlab-sub >/dev/null 2>&1
+-sleep 1
+-systemctl is-active --quiet packetlab-sub && ok "сервер подписок на :9999" \
+-  || warn "packetlab-sub не поднялся: journalctl -u packetlab-sub"
++  systemctl daemon-reload
++  systemctl enable --now packetlab-sub >/dev/null 2>&1
++  sleep 1
++  systemctl is-active --quiet packetlab-sub && ok "сервер подписок на :9999" \
++    || warn "packetlab-sub не поднялся: journalctl -u packetlab-sub"
++else
++  say "без домена: HTTPS-подписка недоступна — ссылки печатает меню (пункт l) напрямую"
++fi
+ 
+ # ----------------------------------------------------------------- итог ---
+ # Ядро могло обновиться при PL_UPGRADE=1 — перезагружать сервер сами не будем.
+@@ -497,6 +597,10 @@ if [ -n "$new_kern" ] && [ "$new_kern" != "$run_kern" ]; then
+ fi
+ 
+ head_ "готово" "протоколы ставятся из меню"
+-printf '  %sпроверь, что A-запись %s → %s уже есть%s\n' "$C_GRY" "$DOMAIN" "$SERVER_IP" "$C_RST"
+-printf '  %sподдомены протоколов создадутся автоматически%s\n\n' "$C_GRY" "$C_RST"
++if [ "$PL_BRANCH" = nodomain ]; then
++  printf '  %sIP сервера: %s — ссылки для клиента печатает меню (l)%s\n\n' "$C_GRY" "$SERVER_IP" "$C_RST"
++else
++  printf '  %sпроверь, что A-запись %s → %s уже есть%s\n' "$C_GRY" "$DOMAIN" "$SERVER_IP" "$C_RST"
++  printf '  %sподдомены протоколов создадутся автоматически%s\n\n' "$C_GRY" "$C_RST"
++fi
+ printf '  запуск меню:  %spacketlab%s\n\n' "$C_B" "$C_RST"
+diff --git a/lib/core.sh b/lib/core.sh
+index 508a292..0076e35 100644
+--- a/lib/core.sh
++++ b/lib/core.sh
+@@ -184,6 +184,14 @@ pl_meta_has() {
+   [ -n "$(pl_meta_get "$1")" ]
+ }
+ 
++# Адрес сервера для ссылок клиента: домен, если он есть, иначе IP —
++# нужно модулям, которые умеют работать в ветке установки без домена
++# (REALITY, Mieru).
++pl_server_addr() {
++  [ -n "$PL_DOMAIN" ] && { printf '%s' "$PL_DOMAIN"; return; }
++  pl_meta_get ip
++}
++
+ # ------------------------------------------------------------------ dns ---
+ # Проверяет A-запись, при отсутствии создаёт через Cloudflare API.
+ # Proxy обязан быть выключен: иначе Cloudflare терминирует TLS и SNI-роутинг
+diff --git a/lib/state.sh b/lib/state.sh
+index 9bfe5c5..176d0f0 100644
+--- a/lib/state.sh
++++ b/lib/state.sh
+@@ -19,6 +19,17 @@ pl_sub_state() {
+   systemctl is-active --quiet packetlab-sub && printf 'up' || printf 'down'
+ }
+ 
++# Для ветки без домена: строка "l" показывает не состояние несуществующего
++# packetlab-sub, а есть ли вообще что показывать.
++pl_any_installed() {
++  local f
++  for f in "$PL_ROOT"/modules/*.sh; do
++    [ -e "$f" ] || continue
++    [ "$(mod_call "$f" mod_status)" != off ] && { printf 'up'; return; }
++  done
++  printf 'off'
++}
++
+ pl_cert_state() {
+   [ -f "$PL_CERT" ] || { printf 'off'; return; }
+   if openssl x509 -in "$PL_CERT" -noout -checkend 604800 >/dev/null 2>&1; then
+diff --git a/lib/ui.sh b/lib/ui.sh
+index b2df280..945098c 100644
+--- a/lib/ui.sh
++++ b/lib/ui.sh
+@@ -151,3 +151,11 @@ ui_run() {
+     return 1
+   fi
+ }
++
++# QR в терминал для произвольного текста (ссылка-подписка, vless://, mieru://).
++# Молча ничего не делает, если qrencode не стоит — вызывающий сам решает,
++# предупреждать об этом или нет.
++ui_qr() {
++  command -v qrencode >/dev/null 2>&1 || return 1
++  printf '%s' "$1" | qrencode -t ANSIUTF8 -m 1
++}
+diff --git a/modules/mieru.sh b/modules/mieru.sh
+index c273869..dd081b1 100644
+--- a/modules/mieru.sh
++++ b/modules/mieru.sh
+@@ -7,6 +7,7 @@ MOD_DESC="TCP, свой шифр; сервер mita"
+ MOD_ENGINE=mita
+ MOD_PORT=39000
+ MOD_PROTO=tcp
++MOD_NEEDS_DOMAIN=no
+ 
+ mod_status() {
+   command -v mita >/dev/null 2>&1 || { printf off; return; }
+@@ -43,12 +44,12 @@ mod_remove() {
+ }
+ 
+ mod_link() {
+-  local name="Mieru"
++  local name="Mieru" addr; addr=$(pl_server_addr)
+   case "$1" in
+     clash) cat <<YAML
+ - name: ${name}
+   type: mieru
+-  server: ${PL_DOMAIN}
++  server: ${addr}
+   port: $(pl_meta_get ${MOD_ID}_port)
+   transport: TCP
+   username: ${PL_USER}
+@@ -56,13 +57,13 @@ mod_link() {
+ YAML
+     ;;
+     singbox) cat <<JSON
+-{ "type":"mieru","tag":"${name}","server":"${PL_DOMAIN}","server_port":$(pl_meta_get ${MOD_ID}_port),
++{ "type":"mieru","tag":"${name}","server":"${addr}","server_port":$(pl_meta_get ${MOD_ID}_port),
+   "transport":"TCP","username":"${PL_USER}","password":"$(pl_meta_get ${MOD_ID}_pass)",
+   "multiplexing":"MULTIPLEXING_HIGH" }
+ JSON
+     ;;
+     uri) printf 'mierus://%s@%s:%s#%s\n' \
+       "$(printf '%s:%s' "$PL_USER" "$(pl_meta_get ${MOD_ID}_pass)" | base64 -w0)" \
+-      "$PL_DOMAIN" "$(pl_meta_get ${MOD_ID}_port)" "$name" ;;
++      "$addr" "$(pl_meta_get ${MOD_ID}_port)" "$name" ;;
+   esac
+ }
+diff --git a/modules/reality.sh b/modules/reality.sh
+index e02da9c..a585937 100644
+--- a/modules/reality.sh
++++ b/modules/reality.sh
+@@ -5,20 +5,30 @@ MOD_DESC="VLESS + xtls-rprx-vision, маскировка под чужой TLS"
+ MOD_ENGINE=sing-box
+ MOD_PORT=8443
+ MOD_PROTO=tcp
+-MOD_VIA_HAPROXY=yes
++MOD_NEEDS_DOMAIN=no
++# Без домена REALITY стоит на 443 сам, haproxy перед ним нет —
++# см. mod_install. PL_DOMAIN на момент чтения этого файла уже
++# установлен core.sh (наследуется в подоболочку mod_meta/mod_call).
++if [ -n "$PL_DOMAIN" ]; then MOD_VIA_HAPROXY=yes; else MOD_VIA_HAPROXY=no; fi
+ 
+ mod_status() {
+   pl_singbox_has_tag "${MOD_ID}-in" || { printf off; return; }
+-  pl_port_listening "$MOD_PORT" tcp || { printf down; return; }
+-  pl_ufw_allows 443 tcp || { printf blocked; return; }
+-  pl_haproxy_has_backend "$MOD_ID" || { printf broken; return; }
++  if [ -n "$PL_DOMAIN" ]; then
++    pl_port_listening "$MOD_PORT" tcp || { printf down; return; }
++    pl_ufw_allows 443 tcp || { printf blocked; return; }
++    pl_haproxy_has_backend "$MOD_ID" || { printf broken; return; }
++  else
++    # без домена REALITY сам стоит на 443, haproxy в этой ветке не ставится
++    pl_port_listening 443 tcp || { printf down; return; }
++    pl_ufw_allows 443 tcp || { printf blocked; return; }
++  fi
+   pl_meta_has reality_uuid || { printf broken; return; }
+   printf up
+ }
+ 
+ mod_install() {
+   pl_singbox_has_tag "${MOD_ID}-in" && { ui_err "инбаунд ${MOD_ID}-in уже есть — сначала удалить"; return 1; }
+-  local uuid target kp priv pub sid
++  local uuid target kp priv pub sid listen port
+   uuid=$(pl_uuid)
+   target=$(pl_meta_get reality_target); [ -z "$target" ] && target=www.bing.com
+   kp=$(sing-box generate reality-keypair)
+@@ -26,8 +36,18 @@ mod_install() {
+   pub=$(printf '%s\n' "$kp"  | awk '/PublicKey/{print $2}')
+   sid=$(pl_hex 8)
+ 
++  # С доменом REALITY прячется за haproxy на 127.0.0.1:8443 — на 443 он
++  # делит место с AnyTLS/Naive по SNI. Без домена делить не с кем: сам
++  # протокол уже форвардит нераспознанных клиентов на target, второй слой
++  # маскировки (haproxy+decoy) не нужен — слушаем 443 напрямую.
++  if [ -n "$PL_DOMAIN" ]; then
++    listen=127.0.0.1; port=$MOD_PORT
++  else
++    listen=0.0.0.0; port=443
++  fi
++
+   pl_singbox_add_inbound "$(cat <<JSON
+-{ "type":"vless","tag":"${MOD_ID}-in","listen":"127.0.0.1","listen_port":${MOD_PORT},
++{ "type":"vless","tag":"${MOD_ID}-in","listen":"${listen}","listen_port":${port},
+   "users":[{"name":"${PL_USER}","uuid":"${uuid}","flow":"xtls-rprx-vision"}],
+   "tls":{"enabled":true,"server_name":"${target}","reality":{"enabled":true,
+     "handshake":{"server":"${target}","server_port":443},
+@@ -35,7 +55,9 @@ mod_install() {
+ JSON
+ )" || return 1
+ 
+-  pl_haproxy_add_sni "$target" "$MOD_ID" "$MOD_PORT" || return 1
++  if [ -n "$PL_DOMAIN" ]; then
++    pl_haproxy_add_sni "$target" "$MOD_ID" "$MOD_PORT" || return 1
++  fi
+   pl_ufw_open 443 tcp "$MOD_ID"
+   pl_meta_set "${MOD_ID}_uuid" "$uuid"
+   pl_meta_set "${MOD_ID}_pbk" "$pub"
+@@ -46,18 +68,18 @@ JSON
+ 
+ mod_remove() {
+   pl_singbox_del_inbound "${MOD_ID}-in" || return 1
+-  pl_haproxy_del_sni "$MOD_ID"
++  [ -n "$PL_DOMAIN" ] && pl_haproxy_del_sni "$MOD_ID"
+   pl_meta_del "${MOD_ID}_uuid" "${MOD_ID}_pbk" "${MOD_ID}_sid" "${MOD_ID}_sni"
+   pl_singbox_apply && pl_sub_reload
+ }
+ 
+ mod_link() {
+-  local name="REALITY"
++  local name="REALITY" addr; addr=$(pl_server_addr)
+   case "$1" in
+     clash) cat <<YAML
+ - name: ${name}
+   type: vless
+-  server: ${PL_DOMAIN}
++  server: ${addr}
+   port: 443
+   uuid: $(pl_meta_get ${MOD_ID}_uuid)
+   network: tcp
+@@ -72,14 +94,14 @@ mod_link() {
+ YAML
+     ;;
+     singbox) cat <<JSON
+-{ "type":"vless","tag":"${name}","server":"${PL_DOMAIN}","server_port":443,
++{ "type":"vless","tag":"${name}","server":"${addr}","server_port":443,
+   "uuid":"$(pl_meta_get ${MOD_ID}_uuid)","flow":"xtls-rprx-vision",
+   "tls":{"enabled":true,"server_name":"$(pl_meta_get ${MOD_ID}_sni)","utls":{"enabled":true,"fingerprint":"chrome"},
+     "reality":{"enabled":true,"public_key":"$(pl_meta_get ${MOD_ID}_pbk)","short_id":"$(pl_meta_get ${MOD_ID}_sid)"}} }
+ JSON
+     ;;
+     uri) printf 'vless://%s@%s:443?security=reality&sni=%s&fp=chrome&pbk=%s&sid=%s&flow=xtls-rprx-vision&type=tcp#%s\n' \
+-      "$(pl_meta_get ${MOD_ID}_uuid)" "$PL_DOMAIN" "$(pl_meta_get ${MOD_ID}_sni)" \
++      "$(pl_meta_get ${MOD_ID}_uuid)" "$addr" "$(pl_meta_get ${MOD_ID}_sni)" \
+       "$(pl_meta_get ${MOD_ID}_pbk)" "$(pl_meta_get ${MOD_ID}_sid)" "$name" ;;
+   esac
+ }
+diff --git a/packetlab b/packetlab
+index 6985759..50f8656 100644
+--- a/packetlab
++++ b/packetlab
+@@ -49,8 +49,12 @@ menu_main() {
+     ui_section "сервер"
+     ui_row "s" "статус и диагностика"   "$(pl_health)"   ""
+     ui_row "u" "пользователи"           "up"             "$(pl_user_count)"
+-    ui_row "l" "ссылка-подписка"        "$(pl_sub_state)" ""
+-    ui_row "c" "сертификат"             "$(pl_cert_state)" "$(pl_cert_days)"
++    if [ -n "$PL_DOMAIN" ]; then
++      ui_row "l" "ссылка-подписка" "$(pl_sub_state)" ""
++      ui_row "c" "сертификат"             "$(pl_cert_state)" "$(pl_cert_days)"
++    else
++      ui_row "l" "ссылки протоколов" "$(pl_any_installed)" ""
++    fi
+     ui_row "t" "тюнинг ядра"            "$(pl_sysctl_state)" ""
+ 
+     ui_section ""
+@@ -80,12 +84,16 @@ menu_main() {
+ # в конфиг, движок не поднимется, и протокол останется в состоянии down —
+ # ровно то, что происходит, когда порт уже кем-то занят.
+ pl_preflight() {
+-  local f="$1" engine port proto svc rc=0
++  local f="$1" engine port proto svc rc=0 needs_domain name
+   engine=$(mod_meta "$f" MOD_ENGINE)
+   port=$(mod_meta "$f" MOD_PORT)
+   proto=$(mod_meta "$f" MOD_PROTO)
++  name=$(mod_meta "$f" MOD_NAME)
++  needs_domain=$(mod_meta "$f" MOD_NEEDS_DOMAIN); [ -z "$needs_domain" ] && needs_domain=yes
+ 
+-  [ -n "$PL_DOMAIN" ] || { ui_err "домен не задан в $PL_META"; rc=1; }
++  if [ "$needs_domain" = yes ]; then
++    [ -n "$PL_DOMAIN" ] || { ui_err "$name требует домен, а сервер установлен в ветке «без домена»"; rc=1; }
++  fi
+ 
+   case "$engine" in
+     sing-box)
+@@ -277,6 +285,7 @@ PYDEL
+ 
+ # ----------------------------------------------------------- подписка ----
+ menu_sub() {
++  [ -n "$PL_DOMAIN" ] || { menu_sub_nodomain; return; }
+   local url tok code
+   while true; do
+     url=$(pl_sub_url)
+@@ -285,6 +294,7 @@ menu_sub() {
+     if [ -n "$url" ]; then
+       printf '\n  %s\n' "$url"
+       ui_note "Karing получит JSON со всеми протоколами, sing-box и прочие — без Mieru"
++      ui_qr "$url" || ui_note "qrencode не поставлен — ссылку клиенту придётся передать текстом"
+     else
+       ui_err "токен не найден в $PL_USERS"
+     fi
+@@ -328,6 +338,32 @@ PYTOK
+   done
+ }
+ 
++# HTTPS-подписки без домена нет (негде взять сертификат) — печатаем ссылки
++# протоколов напрямую, по одной на модуль, с QR если он стоит.
++menu_sub_nodomain() {
++  local f name state link any=0
++  while true; do
++    ui_head "ссылки" "без домена подписки нет — прямые ссылки на клиента"
++    command -v qrencode >/dev/null 2>&1 \
++      || ui_note "qrencode не поставлен — только текст, без QR"
++
++    for f in "${MODULES[@]}"; do
++      state=$(mod_call "$f" mod_status)
++      [ "$state" = off ] && continue
++      any=1
++      name=$(mod_meta "$f" MOD_NAME)
++      link=$(mod_call "$f" mod_link uri)
++      [ -z "$link" ] && continue
++      printf '\n  %s%s%s (%s)\n  %s\n' "$C_B" "$name" "$C_RST" "$(ui_badge "$state")" "$link"
++      ui_qr "$link"
++    done
++    [ "$any" -eq 1 ] || ui_err "ни один протокол ещё не установлен"
++
++    printf '\n  %sb%s  назад\n\n' "$C_B" "$C_RST"
++    case "$(ui_ask "выбор")" in b|B|'') return ;; *) ;; esac
++  done
++}
++
+ # ---------------------------------------------------------- сертификат ---
+ menu_cert() {
+   local l
