@@ -7,6 +7,7 @@ MOD_DESC="TCP, свой шифр; сервер mita"
 MOD_ENGINE=mita
 MOD_PORT=39000
 MOD_PROTO=tcp
+MOD_LEVEL=simple
 
 mod_status() {
   command -v mita >/dev/null 2>&1 || { printf off; return; }

@@ -28,18 +28,70 @@ mod_call() {  # mod_call <файл> <функция> [аргументы]
   ( . "$f"; "$fn" "$@" )
 }
 
+# ------------------------------------------------------------ режим меню ---
+# simple прячет advanced-протоколы и опасные операции; ничего не блокирует —
+# уже установленное видно и управляется в любом режиме.
+pl_ui_mode() {
+  [ "$(pl_meta_get ui_mode)" = advanced ] && printf advanced || printf simple
+}
+
+ui_mode_toggle() {
+  if [ "$(pl_ui_mode)" = simple ]; then
+    if [ "$(pl_meta_get advanced_warned)" != true ]; then
+      ui_confirm "advanced открывает ECH/TUIC/Hysteria2, тюнинг ядра, продление сертификата и правку пользователей — по одной неверной команде можно сломать рабочий стек. продолжить?" \
+        || return
+      pl_meta_set advanced_warned true
+    fi
+    pl_meta_set ui_mode advanced
+  else
+    pl_meta_set ui_mode simple
+  fi
+}
+
+# Серая подсказка внизу главного меню: что скрыто и как это открыть.
+ui_mode_hint() {
+  local mode="$1" f lvl st hidden=()
+  if [ "$mode" = advanced ]; then
+    ui_note "m — вернуться в простой режим"
+    return
+  fi
+  for f in "${MODULES[@]}"; do
+    lvl=$(mod_meta "$f" MOD_LEVEL)
+    [ "$lvl" = advanced ] || continue
+    st=$(mod_call "$f" mod_status)
+    [ "$st" = off ] && hidden+=("$(mod_meta "$f" MOD_NAME)")
+  done
+  local extra="тюнинг ядра, добавление/удаление пользователей, продление сертификата"
+  if [ "${#hidden[@]}" -gt 0 ]; then
+    local IFS=', '
+    ui_note "скрыто: ${hidden[*]}, $extra — m открывает всё"
+  else
+    ui_note "скрыто: $extra — m открывает всё"
+  fi
+}
+
 # ---------------------------------------------------------------- меню ----
 menu_main() {
-  local i choice f id name desc state port
+  local i choice f lvl name state port mode visible=()
 
   while true; do
+    mode=$(pl_ui_mode)
     ui_head "packetlab" "$(pl_domain_or_unset) · $(pl_engine_line)"
 
     ui_section "протоколы"
-    i=1
+    visible=()
     for f in "${MODULES[@]}"; do
+      if [ "$mode" = advanced ]; then
+        visible+=("$f")
+      else
+        lvl=$(mod_meta "$f" MOD_LEVEL)
+        state=$(mod_call "$f" mod_status)
+        { [ "$lvl" = simple ] || [ "$state" != off ]; } && visible+=("$f")
+      fi
+    done
+    i=1
+    for f in "${visible[@]}"; do
       name=$(mod_meta "$f" MOD_NAME)
-      desc=$(mod_meta "$f" MOD_DESC)
       port=$(mod_meta "$f" MOD_PORT)/$(mod_meta "$f" MOD_PROTO)
       state=$(mod_call "$f" mod_status)
       ui_row "$i" "$name" "$state" "$port"
@@ -51,22 +103,29 @@ menu_main() {
     ui_row "u" "пользователи"           "up"             "$(pl_user_count)"
     ui_row "l" "ссылка-подписка"        "$(pl_sub_state)" ""
     ui_row "c" "сертификат"             "$(pl_cert_state)" "$(pl_cert_days)"
-    ui_row "t" "тюнинг ядра"            "$(pl_sysctl_state)" ""
+    [ "$mode" = advanced ] && ui_row "t" "тюнинг ядра" "$(pl_sysctl_state)" ""
 
     ui_section ""
+    ui_mode_hint "$mode"
+    if [ "$mode" = advanced ]; then
+      printf '  %sm%s  простой режим\n' "$C_B" "$C_RST"
+    else
+      printf '  %sm%s  расширенный режим\n' "$C_B" "$C_RST"
+    fi
     printf '  %sq%s  выход\n\n' "$C_B" "$C_RST"
 
     choice=$(ui_ask "выбор")
     case "$choice" in
       ''|q|Q) printf '\n'; exit 0 ;;
+      m|M) ui_mode_toggle ;;
       s) menu_health ;;
       u) menu_users ;;
       l) menu_sub ;;
       c) menu_cert ;;
-      t) menu_sysctl ;;
+      t) if [ "$mode" = advanced ]; then menu_sysctl; else ui_err "нет такого пункта"; sleep 1; fi ;;
       *)
-        if [ "$choice" -ge 1 ] 2>/dev/null && [ "$choice" -le "${#MODULES[@]}" ]; then
-          menu_module "${MODULES[$((choice-1))]}"
+        if [ "$choice" -ge 1 ] 2>/dev/null && [ "$choice" -le "${#visible[@]}" ]; then
+          menu_module "${visible[$((choice-1))]}"
         else
           ui_err "нет такого пункта"; sleep 1
         fi
@@ -230,7 +289,8 @@ for i,u in enumerate(json.load(open('$PL_USERS')),1):
 }
 
 menu_users() {
-  local n i name tok
+  local n i name tok mode
+  mode=$(pl_ui_mode)
   while true; do
     ui_head "пользователи" "подпиской владеет первый в списке"
     ui_section "список"
@@ -239,12 +299,15 @@ menu_users() {
     done < <(pl_users_list)
 
     ui_section ""
-    ui_row "1" "добавить" up ""
-    ui_row "2" "удалить"  up ""
+    if [ "$mode" = advanced ]; then
+      ui_row "1" "добавить" up ""
+      ui_row "2" "удалить"  up ""
+    fi
     printf '  %sb%s  назад\n\n' "$C_B" "$C_RST"
 
     case "$(ui_ask "выбор")" in
-      1) n=$(ui_ask "имя"); [ -z "$n" ] && continue
+      1) [ "$mode" = advanced ] || { ui_err "нет такого пункта"; sleep 1; continue; }
+         n=$(ui_ask "имя"); [ -z "$n" ] && continue
          if python3 - "$n" <<'PYADD'
 import json,secrets,sys
 p="/etc/packetlab/users.json"
@@ -255,7 +318,8 @@ json.dump(d,open(p,"w"),indent=2,ensure_ascii=False)
 PYADD
          then ui_ok "добавлен"; pl_sub_reload; else ui_err "имя уже занято"; fi
          ui_ask "enter" >/dev/null ;;
-      2) n=$(ui_ask "имя"); [ -z "$n" ] && continue
+      2) [ "$mode" = advanced ] || { ui_err "нет такого пункта"; sleep 1; continue; }
+         n=$(ui_ask "имя"); [ -z "$n" ] && continue
          if ui_confirm "удалить $n? его токен подписки пропадёт безвозвратно"; then
            if python3 - "$n" <<'PYDEL'
 import json,sys
@@ -276,8 +340,36 @@ PYDEL
 }
 
 # ----------------------------------------------------------- подписка ----
+# Без домена подписки не бывает — сервер подписок отдаёт TLS на доменном
+# имени. Тогда l показывает прямые ссылки установленных протоколов и QR
+# на каждую, если в системе есть qrencode.
+menu_sub_nodomain() {
+  local f name link have_qr=0 any=0
+  command -v qrencode >/dev/null 2>&1 && have_qr=1
+  ui_head "ссылки" "домен не задан — прямые ссылки установленных протоколов"
+
+  for f in "${MODULES[@]}"; do
+    [ "$(mod_call "$f" mod_status)" = off ] && continue
+    link=$(mod_call "$f" mod_link uri)
+    [ -z "$link" ] && continue
+    any=1
+    name=$(mod_meta "$f" MOD_NAME)
+    printf '\n  %s%s%s\n  %s\n' "$C_B" "$name" "$C_RST" "$link"
+    [ "$have_qr" = 1 ] && qrencode -t UTF8 <<<"$link"
+  done
+
+  if [ "$any" = 0 ]; then
+    ui_note "ни один протокол не установлен"
+  elif [ "$have_qr" = 0 ]; then
+    ui_note "qrencode не установлен, ссылка текстом"
+  fi
+  printf '\n'
+  ui_ask "enter" >/dev/null
+}
+
 menu_sub() {
   local url tok code
+  [ -z "$PL_DOMAIN" ] && { menu_sub_nodomain; return; }
   while true; do
     url=$(pl_sub_url)
     ui_head "ссылка-подписка" "формат выбирается по User-Agent клиента"
@@ -330,7 +422,8 @@ PYTOK
 
 # ---------------------------------------------------------- сертификат ---
 menu_cert() {
-  local l
+  local l mode
+  mode=$(pl_ui_mode)
   while true; do
     ui_head "сертификат" "wildcard, DNS-01 через Cloudflare"
     if [ -f "$PL_CERT" ]; then
@@ -342,9 +435,11 @@ menu_cert() {
 
     ui_section ""
     ui_row "1" "проверить продление (dry-run)" up ""
-    ui_row "2" "продлить принудительно"        up ""
-    ui_row "3" "показать deploy-hook" \
-      "$([ -x /etc/letsencrypt/renewal-hooks/deploy/packetlab.sh ] && printf up || printf off)" ""
+    if [ "$mode" = advanced ]; then
+      ui_row "2" "продлить принудительно"        up ""
+      ui_row "3" "показать deploy-hook" \
+        "$([ -x /etc/letsencrypt/renewal-hooks/deploy/packetlab.sh ] && printf up || printf off)" ""
+    fi
     printf '  %sb%s  назад\n\n' "$C_B" "$C_RST"
 
     case "$(ui_ask "выбор")" in
@@ -356,7 +451,8 @@ menu_cert() {
            tail -5 /tmp/pl-certbot.log | while read -r l; do ui_note "$l"; done
          fi
          ui_ask "enter" >/dev/null ;;
-      2) # Let's Encrypt: 5 дублирующих сертификатов на набор доменов в неделю,
+      2) [ "$mode" = advanced ] || { ui_err "нет такого пункта"; sleep 1; continue; }
+         # Let's Encrypt: 5 дублирующих сертификатов на набор доменов в неделю,
          # принудительное продление тратит эту квоту.
          if ui_confirm "тратит недельный лимит Let's Encrypt. продолжить?"; then
            if certbot renew --force-renewal --cert-name "$PL_DOMAIN" >/tmp/pl-certbot.log 2>&1; then
@@ -368,7 +464,8 @@ menu_cert() {
            fi
          fi
          ui_ask "enter" >/dev/null ;;
-      3) # sing-box читает сертификат с диска и сам его не перечитывает —
+      3) [ "$mode" = advanced ] || { ui_err "нет такого пункта"; sleep 1; continue; }
+         # sing-box читает сертификат с диска и сам его не перечитывает —
          # без рестарта после продления всё тихо ляжет через 90 дней.
          if [ -f /etc/letsencrypt/renewal-hooks/deploy/packetlab.sh ]; then
            while read -r l; do ui_note "$l"; done < /etc/letsencrypt/renewal-hooks/deploy/packetlab.sh

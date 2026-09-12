@@ -7,6 +7,7 @@ MOD_PORT=8447
 MOD_PROTO=tcp
 MOD_VIA_HAPROXY=yes
 MOD_ECH_DIR=/etc/packetlab/ech
+MOD_LEVEL=advanced
 
 mod_status() {
   pl_singbox_has_tag "${MOD_ID}-in" || { printf off; return; }

@@ -125,7 +125,7 @@ fi
 
 apt-get install -y -qq \
   curl ca-certificates gnupg jq openssl ufw haproxy python3 python3-venv \
-  certbot python3-certbot-dns-cloudflare dnsutils iproute2 >/dev/null \
+  certbot python3-certbot-dns-cloudflare dnsutils iproute2 qrencode >/dev/null \
   || die "не смог поставить базовые пакеты"
 ok "базовые пакеты"
 
@@ -427,7 +427,8 @@ if [ ! -f "$PL_ETC/meta.json" ]; then
   "ip": "$SERVER_IP",
   "cf_token": "$CF_TOKEN",
   "cf_zone": "$CF_ZONE",
-  "reality_target": "www.bing.com"
+  "reality_target": "www.bing.com",
+  "ui_mode": "simple"
 }
 META
   chmod 600 "$PL_ETC/meta.json"

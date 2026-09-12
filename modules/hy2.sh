@@ -5,6 +5,7 @@ MOD_DESC="QUIC/UDP, BBR (без Brutal)"
 MOD_ENGINE=sing-box
 MOD_PORT=9445
 MOD_PROTO=udp
+MOD_LEVEL=advanced
 
 mod_status() {
   pl_singbox_has_tag "${MOD_ID}-in" || { printf off; return; }
