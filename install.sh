@@ -469,6 +469,27 @@ if [ ! -f "$PL_ETC/users.json" ]; then
 fi
 ok "состояние в $PL_ETC"
 
+# Секция firewall выше сбрасывает ufw и открывает только SSH и 443 — правила
+# уже установленных протоколов (Hysteria2, TUIC, Mieru и т.п.) при этом
+# теряются, а mod_install, который их создаёт, при повторном запуске
+# install.sh не вызывается. Дочиняем: для каждого модуля, который уже
+# сконфигурирован (mod_status != off), восстанавливаем его правило.
+. "$PL_ROOT/lib/core.sh"
+restored=()
+for f in "$PL_ROOT"/modules/*.sh; do
+  [ -e "$f" ] || continue
+  id=$( . "$f"
+        [ "$(mod_status)" = off ] && exit 0
+        pl_ufw_sync_module
+        printf '%s' "$MOD_ID" )
+  [ -n "$id" ] && restored+=("$id")
+done
+if [ "${#restored[@]}" -gt 0 ]; then
+  ok "firewall восстановлен для: ${restored[*]}"
+else
+  ok "установленных протоколов нет — восстанавливать нечего"
+fi
+
 cat > /etc/systemd/system/packetlab-sub.service <<UNIT
 [Unit]
 Description=packetlab subscription server

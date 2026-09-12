@@ -118,6 +118,20 @@ pl_ufw_close() {
   ufw delete allow "${1}/${2}" >/dev/null 2>&1 || true
 }
 
+# Публичный порт модуля, той же логикой, что mod_install и pl_preflight:
+# протоколы за haproxy (MOD_VIA_HAPROXY=yes) делят 443/tcp, остальные слушают
+# сами на MOD_PORT/MOD_PROTO. Идемпотентно — pl_ufw_open не дублирует правило.
+# Модуль должен быть уже source'нут в этой оболочке (или подоболочке):
+# функция читает его MOD_ID/MOD_VIA_HAPROXY/MOD_PORT/MOD_PROTO из области
+# видимости, как и mod_status/mod_install в самом модуле.
+pl_ufw_sync_module() {
+  if [ "${MOD_VIA_HAPROXY:-}" = yes ]; then
+    pl_ufw_open 443 tcp "$MOD_ID"
+  else
+    pl_ufw_open "$MOD_PORT" "$MOD_PROTO" "$MOD_ID"
+  fi
+}
+
 # Правила packetlab, за которыми уже нет слушателя.
 pl_ufw_orphans() {
   local found=1 line port proto

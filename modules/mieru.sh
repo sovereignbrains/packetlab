@@ -30,7 +30,7 @@ mod_install() {
 JSON
   mita apply config "$state" >/dev/null 2>&1 || { ui_err "mita отверг конфиг"; return 1; }
   mita start >/dev/null 2>&1 || mita reload >/dev/null 2>&1
-  pl_ufw_open "$MOD_PORT" tcp "$MOD_ID"
+  pl_ufw_sync_module
   pl_meta_set "${MOD_ID}_pass" "$pass"
   pl_meta_set "${MOD_ID}_port" "$MOD_PORT"
   pl_sub_reload
