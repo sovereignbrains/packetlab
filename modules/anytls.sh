@@ -7,6 +7,7 @@ MOD_PORT=8445
 MOD_PROTO=tcp
 MOD_SNI_LABEL=api
 MOD_VIA_HAPROXY=yes
+MOD_LEVEL=simple
 
 mod_status() {
   pl_singbox_has_tag "${MOD_ID}-in" || { printf off; return; }

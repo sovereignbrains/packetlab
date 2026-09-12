@@ -7,6 +7,7 @@ MOD_PORT=8446
 MOD_PROTO=tcp
 MOD_SNI_LABEL=cloud
 MOD_VIA_HAPROXY=yes
+MOD_LEVEL=simple
 # В Clash YAML типа naive нет — нода уезжает только в sing-box JSON и в URI.
 MOD_NO_CLASH=yes
 
