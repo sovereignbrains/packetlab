@@ -74,7 +74,7 @@ JSON
 )" || return 1
 
   # firewall — неотделимая часть установки, не отдельный шаг
-  pl_ufw_open "$MOD_PORT" "$MOD_PROTO" "$MOD_ID" || return 1
+  pl_ufw_sync_module || return 1
 
   pl_meta_set "${MOD_ID}_uuid" "$uuid"
   pl_meta_set "${MOD_ID}_pass" "$pass"

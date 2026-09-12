@@ -37,7 +37,7 @@ JSON
 )" || return 1
 
   pl_haproxy_add_sni "$target" "$MOD_ID" "$MOD_PORT" || return 1
-  pl_ufw_open 443 tcp "$MOD_ID"
+  pl_ufw_sync_module
   pl_meta_set "${MOD_ID}_uuid" "$uuid"
   pl_meta_set "${MOD_ID}_pbk" "$pub"
   pl_meta_set "${MOD_ID}_sid" "$sid"

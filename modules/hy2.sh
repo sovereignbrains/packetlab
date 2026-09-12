@@ -27,7 +27,7 @@ mod_install() {
     "certificate_path":"${PL_CERT}","key_path":"${PL_KEY}"} }
 JSON
 )" || return 1
-  pl_ufw_open "$MOD_PORT" udp "$MOD_ID"
+  pl_ufw_sync_module
   pl_meta_set "${MOD_ID}_pass" "$pass"
   pl_meta_set "${MOD_ID}_port" "$MOD_PORT"
   pl_singbox_apply && pl_sub_reload
