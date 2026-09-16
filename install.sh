@@ -230,6 +230,10 @@ net.core.wmem_default = 4194304
 net.core.default_qdisc = fq
 net.ipv4.tcp_congestion_control = bbr
 net.ipv4.tcp_fastopen = 3
+# хостер режет исходящий ICMP (100% потерь даже до 1.1.1.1), поэтому
+# классический PMTUD через ICMP "fragmentation needed" не работает —
+# TCP-пробинг определяет реальный MTU пути сам, без опоры на ICMP.
+net.ipv4.tcp_mtu_probing = 1
 SYS
 sysctl -p /etc/sysctl.d/99-packetlab.conf >/dev/null 2>&1
 [ "$(sysctl -n net.ipv4.tcp_congestion_control)" = bbr ] \
@@ -272,6 +276,7 @@ defaults
 # соединение дальше как есть. Поэтому REALITY продолжает работать.
 frontend tls_in
     bind *:443
+    bind :::443 v6only
     tcp-request inspect-delay 5s
     tcp-request content accept if { req.ssl_hello_type 1 }
     # правила use_backend дописываются модулями протоколов
