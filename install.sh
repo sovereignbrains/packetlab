@@ -297,12 +297,99 @@ install -d /var/www/decoy
 cat > /var/www/decoy/index.html <<'HTML'
 <!doctype html><html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Status</title><style>
-body{font-family:ui-sans-serif,system-ui,sans-serif;background:#0f1115;color:#c9d1d9;
-display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0}
-main{text-align:center}h1{font-weight:500;font-size:1.25rem;margin:0 0 .5rem}
-p{color:#7d8590;font-size:.875rem;margin:0}</style></head>
-<body><main><h1>All systems operational</h1><p>Nothing to see here.</p></main></body></html>
+<title>packetlab.tech Status</title>
+<meta name="robots" content="index,follow">
+<style>
+:root{color-scheme:dark}
+*{box-sizing:border-box}
+body{font-family:ui-sans-serif,system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+background:#0f1115;color:#c9d1d9;margin:0;padding:0 16px 64px}
+.wrap{max-width:720px;margin:0 auto}
+header{padding:48px 0 24px;display:flex;align-items:center;gap:12px}
+header .mark{width:28px;height:28px;border-radius:7px;background:#2ea043;
+display:flex;align-items:center;justify-content:center;font-size:15px;flex:none}
+header h1{font-size:1.05rem;font-weight:600;margin:0;color:#e6edf3}
+.banner{background:#0d2818;border:1px solid #1c3a28;border-radius:10px;
+padding:16px 18px;display:flex;align-items:center;gap:10px;margin-bottom:28px}
+.banner .dot{width:10px;height:10px;border-radius:50%;background:#3fb950;flex:none}
+.banner strong{color:#e6edf3;font-weight:600;font-size:.95rem}
+section{margin-bottom:32px}
+section h2{font-size:.75rem;text-transform:uppercase;letter-spacing:.06em;
+color:#7d8590;font-weight:600;margin:0 0 12px}
+.row{display:flex;align-items:center;justify-content:space-between;
+padding:13px 0;border-bottom:1px solid #21262d}
+.row:last-child{border-bottom:none}
+.row .name{font-size:.9rem;color:#e6edf3}
+.status-ok{display:flex;align-items:center;gap:6px;font-size:.8rem;color:#3fb950}
+.status-ok::before{content:"";width:7px;height:7px;border-radius:50%;background:#3fb950}
+.uptime{margin-top:6px;display:flex;gap:2px}
+.uptime i{width:3px;height:16px;border-radius:1px;background:#238636;display:block}
+.uptime i.warn{background:#9e6a03}
+.uptime-wrap{display:flex;justify-content:space-between;align-items:flex-end;padding:13px 0;
+border-bottom:1px solid #21262d}
+.uptime-wrap:last-child{border-bottom:none}
+.uptime-label{font-size:.7rem;color:#7d8590;margin-top:4px}
+.incident{padding:14px 0;border-bottom:1px solid #21262d}
+.incident:last-child{border-bottom:none}
+.incident .date{font-size:.7rem;color:#7d8590;margin-bottom:3px}
+.incident .title{font-size:.85rem;color:#c9d1d9}
+.incident .tag{display:inline-block;font-size:.68rem;color:#7d8590;
+border:1px solid #30363d;border-radius:4px;padding:1px 6px;margin-top:5px}
+footer{text-align:center;color:#484f58;font-size:.75rem;padding-top:24px}
+</style></head>
+<body><div class="wrap">
+<header><div class="mark">✓</div><h1>packetlab.tech</h1></header>
+
+<div class="banner"><span class="dot"></span><strong>All systems operational</strong></div>
+
+<section>
+<h2>Services</h2>
+<div class="uptime-wrap">
+  <div><div class="row" style="border:none;padding:0 0 4px"><span class="name">Website</span><span class="status-ok">Operational</span></div>
+  <div class="uptime" id="u1"></div><div class="uptime-label">90-day uptime — 99.98%</div></div>
+</div>
+<div class="uptime-wrap">
+  <div style="width:100%"><div class="row" style="border:none;padding:0 0 4px"><span class="name">API</span><span class="status-ok">Operational</span></div>
+  <div class="uptime" id="u2"></div><div class="uptime-label">90-day uptime — 99.95%</div></div>
+</div>
+<div class="uptime-wrap">
+  <div style="width:100%"><div class="row" style="border:none;padding:0 0 4px"><span class="name">CDN</span><span class="status-ok">Operational</span></div>
+  <div class="uptime" id="u3"></div><div class="uptime-label">90-day uptime — 100%</div></div>
+</div>
+<div class="uptime-wrap">
+  <div style="width:100%"><div class="row" style="border:none;padding:0 0 4px"><span class="name">Cloud storage</span><span class="status-ok">Operational</span></div>
+  <div class="uptime" id="u4"></div><div class="uptime-label">90-day uptime — 99.99%</div></div>
+</div>
+</section>
+
+<section>
+<h2>Past incidents</h2>
+<div class="incident">
+  <div class="date">Aug 22, 2026</div>
+  <div class="title">Elevated API response times</div>
+  <span class="tag">Resolved · 34m</span>
+</div>
+<div class="incident">
+  <div class="date">Jul 03, 2026</div>
+  <div class="title">Scheduled maintenance — storage backend migration</div>
+  <span class="tag">Completed</span>
+</div>
+</section>
+
+<footer>Last updated a few minutes ago</footer>
+</div>
+<script>
+(function(){
+  function bars(id,n,warnAt){var e=document.getElementById(id),h='';
+    for(var i=0;i<n;i++){h+='<i'+(warnAt&&warnAt.indexOf(i)>-1?' class="warn"':'')+'></i>';}
+    e.innerHTML=h;}
+  bars('u1',45);
+  bars('u2',45,[38]);
+  bars('u3',45);
+  bars('u4',45,[12]);
+})();
+</script>
+</body></html>
 HTML
 
 # haproxy отдаёт сюда TLS как есть, не расшифровывая (иначе сломался бы
