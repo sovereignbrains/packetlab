@@ -216,3 +216,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# packetlab: lib/ в корне - это bash-библиотеки, а не python-сборка
+!/lib/

@@ -8,6 +8,7 @@ PL_ROOT=${PL_ROOT:-/opt/packetlab}
 . "$PL_ROOT/lib/ui.sh"
 . "$PL_ROOT/lib/core.sh"      # pl_* хелперы: singbox, ufw, dns, meta, secrets
 . "$PL_ROOT/lib/state.sh"
+. "$PL_ROOT/lib/relay.sh"     # выход через другой сервер (вход → выход)
 
 [ "$(id -u)" -eq 0 ] || { ui_err "нужен root"; exit 1; }
 
@@ -103,6 +104,7 @@ menu_main() {
     ui_row "u" "пользователи"           "up"             "$(pl_user_count)"
     ui_row "l" "ссылка-подписка"        "$(pl_sub_state)" ""
     ui_row "c" "сертификат"             "$(pl_cert_state)" "$(pl_cert_days)"
+    ui_row "r" "вход → выход"           "$(pl_relay_badge)" "$(plr where)"
     [ "$mode" = advanced ] && ui_row "t" "тюнинг ядра" "$(pl_sysctl_state)" ""
 
     ui_section ""
@@ -122,6 +124,7 @@ menu_main() {
       u) menu_users ;;
       l) menu_sub ;;
       c) menu_cert ;;
+      r) menu_relay ;;
       t) if [ "$mode" = advanced ]; then menu_sysctl; else ui_err "нет такого пункта"; sleep 1; fi ;;
       *)
         if [ "$choice" -ge 1 ] 2>/dev/null && [ "$choice" -le "${#visible[@]}" ]; then
@@ -528,5 +531,6 @@ case "${1:-}" in
   status)    menu_health ;;
   sub)       pl_sub_url ;;
   link)      for f in "${MODULES[@]}"; do mod_call "$f" mod_link "${2:-uri}"; done ;;
+  relay)     shift; plr "$@" ;;
   *)         ui_err "неизвестная команда: $1"; exit 1 ;;
 esac
