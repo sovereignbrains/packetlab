@@ -405,7 +405,7 @@ fi
 
 # ------------------------------------------------------------ packetlab --
 head_ "packetlab"
-install -d "$PL_ROOT/lib" "$PL_ROOT/modules" "$PL_ROOT/sub" "$PL_ETC" "$PL_VAR"
+install -d "$PL_ROOT/lib" "$PL_ROOT/modules" "$PL_ROOT/relay" "$PL_ROOT/sub" "$PL_ETC" "$PL_VAR"
 
 get() {  # get <путь-в-репо> <куда>
   curl -fsSL "$REPO_RAW/$1" -o "$2" || die "не смог скачать $1"
@@ -414,11 +414,14 @@ get packetlab              "$PL_ROOT/packetlab"
 get lib/ui.sh              "$PL_ROOT/lib/ui.sh"
 get lib/core.sh            "$PL_ROOT/lib/core.sh"
 get lib/state.sh           "$PL_ROOT/lib/state.sh"
+get lib/relay.sh           "$PL_ROOT/lib/relay.sh"
+get relay/plr.sh           "$PL_ROOT/relay/plr.sh"
 get sub/packetlab-sub.py   "$PL_ROOT/sub/packetlab-sub.py"
 for m in reality tuic anytls naive hy2 mieru ech; do
   get "modules/$m.sh" "$PL_ROOT/modules/$m.sh"
 done
-chmod +x "$PL_ROOT/packetlab" "$PL_ROOT/sub/packetlab-sub.py"
+chmod +x "$PL_ROOT/packetlab" "$PL_ROOT/relay/plr.sh" "$PL_ROOT/sub/packetlab-sub.py"
+ln -sf "$PL_ROOT/relay/plr.sh" /usr/local/bin/plr
 ln -sf "$PL_ROOT/packetlab" /usr/local/bin/packetlab
 ok "файлы разложены"
 
