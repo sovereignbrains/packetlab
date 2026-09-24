@@ -532,5 +532,10 @@ case "${1:-}" in
   sub)       pl_sub_url ;;
   link)      for f in "${MODULES[@]}"; do mod_call "$f" mod_link "${2:-uri}"; done ;;
   relay)     shift; plr "$@" ;;
+  install)   f="$PL_ROOT/modules/${2:-}.sh"
+             [ -n "${2:-}" ] && [ -f "$f" ] || { ui_err "packetlab install <модуль>, модули: $(cd "$PL_ROOT/modules" && ls *.sh | sed 's/\.sh$//' | tr '\n' ' ')"; exit 1; }
+             [ "$(mod_call "$f" mod_status)" = off ] || { ui_err "$(mod_meta "$f" MOD_NAME) уже установлен"; exit 1; }
+             pl_preflight "$f" || { ui_note "установка отменена, конфиг не тронут"; exit 1; }
+             mod_call "$f" mod_install && pl_postflight "$f" ;;
   *)         ui_err "неизвестная команда: $1"; exit 1 ;;
 esac

@@ -28,6 +28,7 @@ packetlab            # меню
 packetlab status     # диагностика: конфиг / порт / firewall
 packetlab sub        # ссылка-подписка
 packetlab link uri   # все ноды списком
+packetlab install anytls-reality   # поставить модуль без меню
 ```
 
 ## Что внутри
@@ -36,7 +37,7 @@ packetlab link uri   # все ноды списком
 |---|---|
 | Вход 443/tcp | haproxy, SNI-роутинг без терминации TLS |
 | Вход UDP | sing-box напрямую |
-| Протоколы | REALITY, TUIC, AnyTLS, NaiveProxy, Hysteria2 (sing-box), Mieru (mita) |
+| Протоколы | REALITY, AnyTLS, AnyTLS + REALITY, AnyTLS + ECH, TUIC, NaiveProxy, Hysteria2 (sing-box), Mieru (mita) |
 | Маскировка | Caddy, decoy-сайт по умолчанию |
 | Подписка | один URL, формат по User-Agent |
 
