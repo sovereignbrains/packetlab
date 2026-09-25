@@ -1,46 +1,54 @@
 #!/usr/bin/env bash
-# Mieru обслуживает mita — родной сервер от автора протокола.
-# mihomo на сервере стоит, но пустой: оставлен под будущие эксперименты.
+# Mieru — инбаунд sing-box. Протокол есть в сборке mbox (github.com/enfein/mbox):
+# апстримный sing-box плюс один коммит с protocol/mieru от автора Mieru.
+# Отдельный сервер mita больше не нужен — install.sh ставит mbox вместо sing-box.
 MOD_ID=mieru
 MOD_NAME="Mieru"
-MOD_DESC="TCP, свой шифр; сервер mita"
-MOD_ENGINE=mita
+MOD_DESC="TCP, свой шифр; инбаунд sing-box (сборка mbox)"
+MOD_ENGINE=sing-box
 MOD_PORT=39000
 MOD_PROTO=tcp
 MOD_LEVEL=simple
+MOD_NEEDS_DOMAIN=no      # свой шифр без TLS — сертификат не нужен
+MOD_CLIENTS=extended     # официальный клиент sing-box mieru не знает — в строгую подписку не идёт
 
 mod_status() {
-  command -v mita >/dev/null 2>&1 || { printf off; return; }
-  mita describe config 2>/dev/null | grep -q "$MOD_PORT" || { printf off; return; }
+  pl_singbox_has_tag "${MOD_ID}-in" || { printf off; return; }
   pl_port_listening "$MOD_PORT" tcp || { printf down; return; }
   pl_ufw_allows "$MOD_PORT" tcp || { printf blocked; return; }
-  pl_meta_has mieru_pass || { printf broken; return; }
+  pl_meta_has "${MOD_ID}_pass" || { printf broken; return; }
   printf up
 }
 
 mod_install() {
-  command -v mita >/dev/null 2>&1 || { ui_err "mita не установлен"; return 1; }
-  local pass state=/var/lib/packetlab/mita-state.json
+  pl_singbox_has_tag "${MOD_ID}-in" && { ui_err "инбаунд ${MOD_ID}-in уже есть — сначала удалить"; return 1; }
+  # Официальный sing-box на инбаунд mieru отвечает «unknown inbound type» —
+  # ловим до записи в конфиг и говорим, что делать.
+  pl_singbox_has_mieru || {
+    ui_err "этот sing-box не знает mieru — нужна сборка mbox"
+    ui_note "перезапусти install.sh: он поставит mbox вместо официального sing-box"
+    return 1
+  }
+  local pass
   pass=$(pl_meta_get "${MOD_ID}_pass"); [ -z "$pass" ] && pass=$(pl_secret)
-  mkdir -p /var/lib/packetlab
-  cat > "$state" <<JSON
-{ "portBindings":[{"port":${MOD_PORT},"protocol":"TCP"}],
-  "users":[{"name":"${PL_USER}","password":"${pass}"}],
-  "loggingLevel":"INFO" }
+
+  pl_singbox_add_inbound "$(cat <<JSON
+{ "type":"mieru","tag":"${MOD_ID}-in","listen":"::","listen_port":${MOD_PORT},
+  "transport":"TCP","users":[{"name":"${PL_USER}","password":"${pass}"}] }
 JSON
-  mita apply config "$state" >/dev/null 2>&1 || { ui_err "mita отверг конфиг"; return 1; }
-  mita start >/dev/null 2>&1 || mita reload >/dev/null 2>&1
+)" || return 1
+
   pl_ufw_sync_module
   pl_meta_set "${MOD_ID}_pass" "$pass"
   pl_meta_set "${MOD_ID}_port" "$MOD_PORT"
-  pl_sub_reload
+  pl_singbox_apply && pl_sub_reload
 }
 
 mod_remove() {
-  mita stop >/dev/null 2>&1 || true
+  pl_singbox_del_inbound "${MOD_ID}-in" || return 1
   pl_ufw_close "$MOD_PORT" tcp
   pl_meta_del "${MOD_ID}_pass" "${MOD_ID}_port"
-  pl_sub_reload
+  pl_singbox_apply && pl_sub_reload
 }
 
 mod_link() {
@@ -49,7 +57,7 @@ mod_link() {
     clash) cat <<YAML
 - name: ${name}
   type: mieru
-  server: ${PL_DOMAIN}
+  server: ${PL_HOST}
   port: $(pl_meta_get ${MOD_ID}_port)
   transport: TCP
   username: ${PL_USER}
@@ -57,13 +65,13 @@ mod_link() {
 YAML
     ;;
     singbox) cat <<JSON
-{ "type":"mieru","tag":"${name}","server":"${PL_DOMAIN}","server_port":$(pl_meta_get ${MOD_ID}_port),
+{ "type":"mieru","tag":"${name}","server":"${PL_HOST}","server_port":$(pl_meta_get ${MOD_ID}_port),
   "transport":"TCP","username":"${PL_USER}","password":"$(pl_meta_get ${MOD_ID}_pass)",
   "multiplexing":"MULTIPLEXING_HIGH" }
 JSON
     ;;
     uri) printf 'mierus://%s@%s:%s#%s\n' \
       "$(printf '%s:%s' "$PL_USER" "$(pl_meta_get ${MOD_ID}_pass)" | base64 -w0)" \
-      "$PL_DOMAIN" "$(pl_meta_get ${MOD_ID}_port)" "$name" ;;
+      "$PL_HOST" "$(pl_meta_get ${MOD_ID}_port)" "$name" ;;
   esac
 }

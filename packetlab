@@ -88,6 +88,8 @@ menu_main() {
       states+=("${choice:-?}")    # модуль упал — пусть будет «?», а не пустота
       if [ "${states[-1]}" != off ]; then
         installed+=("${#states[@]}")
+      elif [ -z "$PL_DOMAIN" ] && [ "$(mod_meta "$f" MOD_NEEDS_DOMAIN)" != no ]; then
+        :   # без домена такой протокол не поставить — не показываем
       elif [ "$mode" = advanced ] || [ "$(mod_meta "$f" MOD_LEVEL)" = simple ]; then
         available+=("${#states[@]}")
       fi
@@ -114,8 +116,12 @@ menu_main() {
     ui_section "сервер"
     ui_row "s" "статус и диагностика"   "$(pl_health)"   ""
     ui_row "u" "пользователи"           ""               "всего: $(pl_user_count)"
-    ui_row "l" "ссылка-подписка"        "$(pl_sub_state)" ""
-    ui_row "c" "сертификат"             "$(pl_cert_state)" "$(pl_cert_days)"
+    if [ -n "$PL_DOMAIN" ]; then
+      ui_row "l" "ссылка-подписка"      "$(pl_sub_state)" ""
+    else
+      ui_row "l" "ссылки и QR"          "" "подписка — только с доменом"
+    fi
+    [ -n "$PL_DOMAIN" ] && ui_row "c" "сертификат" "$(pl_cert_state)" "$(pl_cert_days)"
     ui_row "r" "вход → выход"           "$(pl_relay_badge)" "$(plr where)"
     [ "$mode" = advanced ] && ui_row "t" "тюнинг ядра" "$(pl_sysctl_state)" ""
 
@@ -135,7 +141,7 @@ menu_main() {
       s) [ -t 1 ] && printf '\033[H\033[2J'; menu_health ;;
       u) menu_users ;;
       l) menu_sub ;;
-      c) menu_cert ;;
+      c) if [ -n "$PL_DOMAIN" ]; then menu_cert; else ui_err "нет такого пункта"; sleep 1; fi ;;
       r) menu_relay ;;
       t) if [ "$mode" = advanced ]; then menu_sysctl; else ui_err "нет такого пункта"; sleep 1; fi ;;
       *)
@@ -159,7 +165,11 @@ pl_preflight() {
   port=$(mod_meta "$f" MOD_PORT)
   proto=$(mod_meta "$f" MOD_PROTO)
 
-  [ -n "$PL_DOMAIN" ] || { ui_err "домен не задан в $PL_META"; rc=1; }
+  if [ -z "$PL_DOMAIN" ] && [ "$(mod_meta "$f" MOD_NEEDS_DOMAIN)" != no ]; then
+    ui_err "сервер поставлен без домена — $(mod_meta "$f" MOD_NAME) требует домен и сертификат"
+    ui_note "без домена работают REALITY, AnyTLS + REALITY и Mieru"
+    rc=1
+  fi
 
   case "$engine" in
     sing-box)
@@ -182,7 +192,7 @@ pl_preflight() {
   fi
 
   # Сертификат нужен не всем: REALITY обходится без него.
-  if grep -q 'PL_CERT' "$f" && [ ! -f "$PL_CERT" ]; then
+  if [ -n "$PL_DOMAIN" ] && grep -q 'PL_CERT' "$f" && [ ! -f "$PL_CERT" ]; then
     ui_err "нет сертификата $PL_CERT"; rc=1
   fi
 
@@ -282,7 +292,7 @@ menu_health() {
   done
 
   ui_section "сервисы"
-  for s in sing-box mihomo mita haproxy caddy packetlab-sub; do
+  for s in sing-box haproxy caddy packetlab-sub; do
     systemctl list-unit-files "$s.service" >/dev/null 2>&1 || continue
     if systemctl is-active --quiet "$s"; then ui_row "" "$s" up ""; else ui_row "" "$s" down ""; fi
   done

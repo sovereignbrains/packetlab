@@ -7,6 +7,7 @@ MOD_PORT=8448
 MOD_PROTO=tcp
 MOD_VIA_HAPROXY=yes
 MOD_LEVEL=simple
+MOD_NEEDS_DOMAIN=no      # REALITY живёт на чужом сертификате — домен не нужен
 
 mod_status() {
   pl_singbox_has_tag "${MOD_ID}-in" || { printf off; return; }
@@ -66,7 +67,7 @@ mod_link() {
   local name="AnyTLS-REALITY"
   case "$1" in
     singbox) cat <<JSON
-{ "type":"anytls","tag":"${name}","server":"${PL_DOMAIN}","server_port":443,
+{ "type":"anytls","tag":"${name}","server":"${PL_HOST}","server_port":443,
   "password":"$(pl_meta_get ${MOD_ID}_pass)",
   "tls":{"enabled":true,"server_name":"$(pl_meta_get ${MOD_ID}_sni)","utls":{"enabled":true,"fingerprint":"chrome"},
     "reality":{"enabled":true,"public_key":"$(pl_meta_get ${MOD_ID}_pbk)","short_id":"$(pl_meta_get ${MOD_ID}_sid)"}} }
@@ -75,7 +76,7 @@ JSON
     # Поля security=reality для anytls-ссылок общепринятыми не стали: часть клиентов их молча
     # пропускает и подключается без REALITY, то есть не подключается вовсе.
     uri) printf 'anytls://%s@%s:443?security=reality&sni=%s&fp=chrome&pbk=%s&sid=%s#%s\n' \
-      "$(pl_urlenc "$(pl_meta_get ${MOD_ID}_pass)")" "$PL_DOMAIN" "$(pl_meta_get ${MOD_ID}_sni)" \
+      "$(pl_urlenc "$(pl_meta_get ${MOD_ID}_pass)")" "$PL_HOST" "$(pl_meta_get ${MOD_ID}_sni)" \
       "$(pl_meta_get ${MOD_ID}_pbk)" "$(pl_meta_get ${MOD_ID}_sid)" "$name" ;;
     clash) ui_warn "mihomo не поддерживает REALITY для anytls — в Clash этот протокол не уезжает" ;;
   esac

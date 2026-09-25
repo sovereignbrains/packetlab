@@ -3,9 +3,14 @@
 #
 #   curl -fsSL https://raw.githubusercontent.com/sovereignbrains/packetlab/main/install.sh | bash
 #
-# Что делает: ставит ядра (sing-box, mita, mihomo), haproxy как SNI-мультиплексор,
-# Caddy с decoy-сайтом, выпускает wildcard-сертификат через DNS-01, тюнит ядро,
-# поднимает сервер подписок и ставит CLI `packetlab`.
+# Что делает: ставит sing-box (сборка mbox — апстрим + протокол Mieru, другие
+# ядра не нужны), haproxy как SNI-мультиплексор, тюнит ядро, поднимает сервер
+# подписок и ставит CLI `packetlab`. С доменом вдобавок выпускает wildcard-
+# сертификат через DNS-01 и поднимает Caddy с decoy-сайтом.
+#
+# Без домена (Enter на вопросе о домене или PL_NO_DOMAIN=1): ни Cloudflare,
+# ни сертификата, ни decoy — доступны только REALITY, AnyTLS + REALITY и Mieru,
+# в ссылках IP сервера.
 #
 # Протоколы НЕ ставятся автоматически — это делается из меню после установки.
 # Идемпотентен: повторный запуск дочиняет недостающее, не ломая рабочее.
@@ -37,7 +42,7 @@ head_() {
 }
 # Шаг установки — одна строка, а не рамка: рамка на каждом шаге превращала
 # лог в стену одинаковых блоков. Рамка остаётся только в начале и в конце.
-PL_STEP=0; PL_STEPS=9
+PL_STEP=0; PL_STEPS=9    # без домена пересчитывается ниже: нет сертификата и decoy
 step() {
   PL_STEP=$((PL_STEP+1))
   printf '\n%s──%s %s%s/%s%s  %s%s%s' "$C_GRY" "$C_RST" "$C_GRY" "$PL_STEP" "$PL_STEPS" "$C_RST" "$C_B$C_CYN" "$1" "$C_RST"
@@ -61,7 +66,10 @@ ask() {
   # Ответ на отдельной строке, как в меню packetlab: Backspace не поднимается
   # на строку выше, так что вопрос остаётся целым.
   printf '  %s>%s ' "$C_CYN" "$C_RST" >&2
-  read -r a </dev/tty
+  # Конец ввода (оборвался SSH) — выходим: циклы переспроса иначе крутились бы
+  # вечно. ask зовут через $(…), где exit закрыл бы только подоболочку, — поэтому
+  # сигналом по $$ (в подоболочке это PID самого скрипта).
+  read -r a </dev/tty || { printf '\n' >&2; err "ввод оборвался"; kill -TERM $$; exit 1; }
   printf '%s' "${a:-$d}"
 }
 
@@ -106,20 +114,40 @@ PL_USER="${PL_USER:-Boss}"     # метка пользователя внутр�
 # Ошибка в ответе — переспрашиваем, а не выходим: раньше пустой Enter
 # в первом же вопросе выкидывал в shell, и установку начинали заново.
 # Заданное через окружение не переспрашивается — там ошибка фатальна.
-if [ -n "$DOMAIN" ]; then
+# Развилка: домен есть — полный набор; домена нет — только протоколы,
+# которым свой сертификат не нужен. Домен из прошлой установки — ответ
+# по умолчанию, чтобы повторный запуск по Enter его не потерял.
+NO_DOMAIN=0
+prev_domain=$(python3 -c "import json;print(json.load(open('$PL_ETC/meta.json')).get('domain',''))" 2>/dev/null)
+if [ "${PL_NO_DOMAIN:-0}" = 1 ]; then
+  NO_DOMAIN=1; DOMAIN=''
+elif [ -n "$DOMAIN" ]; then
   valid_domain "$DOMAIN" || die "PL_DOMAIN=$DOMAIN — не похоже на домен"
 else
+  [ -n "$prev_domain" ] \
+    || say "без домена: только REALITY, AnyTLS + REALITY и Mieru — без Cloudflare и сертификата"
   while true; do
-    DOMAIN=$(ask "домен без поддомена, например example.com")
+    if [ -n "$prev_domain" ]; then
+      DOMAIN=$(ask "домен без поддомена" "$prev_domain")
+    else
+      DOMAIN=$(ask "домен без поддомена, например example.com (Enter — без домена)")
+    fi
     DOMAIN=${DOMAIN#*://}; DOMAIN=${DOMAIN%%/*}; DOMAIN=${DOMAIN,,}
+    [ -z "$DOMAIN" ] && { NO_DOMAIN=1; break; }
     valid_domain "$DOMAIN" && break
-    err "нужен домен вида example.com"
+    err "нужен домен вида example.com или пустой Enter"
   done
+fi
+if [ "$NO_DOMAIN" = 1 ]; then
+  PL_STEPS=7; CF_TOKEN=''; CF_ZONE=''
+  ok "ставлю без домена"
 fi
 
 # Токены при копипасте с телефона регулярно теряют последний символ —
 # проверяем сразу, а не после получаса установки.
-if [ -n "$CF_TOKEN" ]; then
+if [ "$NO_DOMAIN" = 1 ]; then
+  :
+elif [ -n "$CF_TOKEN" ]; then
   say "проверяю токен…"
   cf_token_ok "$CF_TOKEN" \
     || die "Cloudflare отверг PL_CF_TOKEN. Частая причина — при копировании потерялся последний символ."
@@ -132,10 +160,10 @@ else
     err "Cloudflare отверг токен — проверь, что скопирован целиком"
   done
 fi
-ok "токен принят"
+[ "$NO_DOMAIN" = 1 ] || ok "токен принят"
 
 # Zone ID сначала пробуем узнать сами — вручную его ищут дольше всего.
-if [ -z "$CF_ZONE" ]; then
+if [ "$NO_DOMAIN" = 0 ] && [ -z "$CF_ZONE" ]; then
   CF_ZONE=$(cf_zone_lookup "$CF_TOKEN" "$DOMAIN")
   if [ -n "$CF_ZONE" ]; then
     ok "Zone ID найден сам: $CF_ZONE"
@@ -155,8 +183,10 @@ say "внешний IP: $SERVER_IP"
 
 # A-запись домена. Сертификат выпустится и без неё (DNS-01), но клиент
 # в такой сервер не попадёт — предупреждаем до, а не после установки.
-resolved=$(getent ahostsv4 "$DOMAIN" 2>/dev/null | awk 'NR==1{print $1}')
-if [ -z "$resolved" ]; then
+[ "$NO_DOMAIN" = 1 ] || resolved=$(getent ahostsv4 "$DOMAIN" 2>/dev/null | awk 'NR==1{print $1}')
+if [ "$NO_DOMAIN" = 1 ]; then
+  :
+elif [ -z "$resolved" ]; then
   warn "A-запись $DOMAIN не резолвится — создай её на $SERVER_IP"
 elif [ "$resolved" != "$SERVER_IP" ]; then
   warn "$DOMAIN указывает на $resolved, а сервер — $SERVER_IP"
@@ -192,14 +222,15 @@ else
     || ok "система актуальна"
 fi
 
-apt-get install -y -qq \
-  curl ca-certificates gnupg jq openssl ufw haproxy python3 python3-venv \
-  certbot python3-certbot-dns-cloudflare dnsutils iproute2 qrencode >/dev/null \
-  || die "не смог поставить базовые пакеты"
+pkgs=(curl ca-certificates gnupg jq openssl ufw haproxy python3 python3-venv dnsutils iproute2 qrencode)
+# certbot нужен только под сертификат домена
+[ "$NO_DOMAIN" = 1 ] || pkgs+=(certbot python3-certbot-dns-cloudflare)
+apt-get install -y -qq "${pkgs[@]}" >/dev/null || die "не смог поставить базовые пакеты"
 ok "базовые пакеты"
 
-# Caddy живёт в собственном репозитории — в Debian он есть не всегда.
-if ! command -v caddy >/dev/null; then
+# Caddy отдаёт decoy-сайт с сертификатом домена — без домена не нужен.
+# Живёт в собственном репозитории — в Debian он есть не всегда.
+if [ "$NO_DOMAIN" = 0 ] && ! command -v caddy >/dev/null; then
   if ! apt-get install -y -qq caddy >/dev/null 2>&1; then
     say "подключаю репозиторий Caddy…"
     curl -fsSL https://dl.cloudsmith.io/public/caddy/stable/gpg.key \
@@ -209,7 +240,7 @@ if ! command -v caddy >/dev/null; then
     apt-get update -qq && apt-get install -y -qq caddy >/dev/null || die "Caddy не встал"
   fi
 fi
-ok "caddy $(caddy version 2>/dev/null | head -1)"
+[ "$NO_DOMAIN" = 1 ] || ok "caddy $(caddy version 2>/dev/null | head -1)"
 
 # ----------------------------------------------------------------- ядра ---
 # Тянем .deb из GitHub Releases. Версия не фиксируется намеренно: стек
@@ -226,29 +257,51 @@ fetch_deb() {   # fetch_deb <owner/repo> <шаблон-имени>
   rm -f "$tmp"
 }
 
-step "ядра"
-if command -v sing-box >/dev/null; then
-  ok "sing-box уже стоит: $(sing-box version | head -1 | awk '{print $3}')"
-else
-  fetch_deb SagerNet/sing-box 'linux_amd64\.deb$' && ok "sing-box $(sing-box version | head -1 | awk '{print $3}')" \
-    || die "sing-box не установился"
-fi
+step "sing-box" "сборка mbox: апстрим + Mieru"
+# Ядро одно. Mieru — инбаунд sing-box из сборки mbox (github.com/enfein/mbox):
+# апстримный sing-box плюс один коммит protocol/mieru от автора Mieru.
+# Отдельный сервер mita и пустой mihomo больше не ставятся.
+sb_ver() { sing-box version 2>/dev/null | head -1 | awk '{print $3}'; }
+# По версии mbox не отличить («sing-box 1.14.1»), поэтому спрашиваем сам
+# бинарник: официальный на инбаунд mieru отвечает «unknown inbound type».
+sb_has_mieru() {
+  local t rc
+  t=$(mktemp)
+  printf '{"inbounds":[{"type":"mieru","tag":"t","listen":"127.0.0.1","listen_port":1,"transport":"TCP","users":[{"name":"t","password":"t"}]}]}' >"$t"
+  sing-box check -c "$t" >/dev/null 2>&1; rc=$?
+  rm -f "$t"
+  return $rc
+}
 
-if command -v mita >/dev/null; then
-  ok "mita уже стоит"
+if command -v sing-box >/dev/null && sb_has_mieru; then
+  ok "sing-box $(sb_ver) с Mieru уже стоит"
 else
-  fetch_deb enfein/mieru 'mita.*amd64\.deb$' && ok "mita" || warn "mita не установился — Mieru будет недоступен"
+  command -v sing-box >/dev/null \
+    && say "стоит официальный sing-box $(sb_ver) — меняю на mbox (апстрим + Mieru)"
+  apt-mark unhold sing-box >/dev/null 2>&1
+  fetch_deb enfein/mbox 'linux_amd64\.deb$' || die "не смог скачать или поставить mbox"
+  sb_has_mieru || die "поставленный sing-box не знает mieru — что-то не так со сборкой mbox"
+  ok "sing-box $(sb_ver) + Mieru"
 fi
+# Пакет mbox называется так же, как официальный: подключённый репозиторий
+# SagerNet при apt upgrade «обновил» бы его обратно, и Mieru молча пропал бы.
+apt-mark hold sing-box >/dev/null 2>&1 && ok "пакет закреплён (apt-mark hold sing-box)"
 
-# mihomo ставится пустым: протоколов на нём нет, held под будущие тесты.
-if command -v mihomo >/dev/null; then
-  ok "mihomo уже стоит"
-else
-  fetch_deb MetaCubeX/mihomo 'linux-amd64.*\.deb$' && ok "mihomo (простаивает)" \
-    || warn "mihomo не установился — не критично"
+# Хвосты прошлых версий packetlab. Пароль Mieru остаётся в meta.json, так что
+# после переустановки протокола из меню ссылки у клиентов не поменяются.
+if dpkg -s mita >/dev/null 2>&1; then
+  mita_ports=$(mita describe config 2>/dev/null | grep -c '"port"')
+  mita stop >/dev/null 2>&1
+  apt-get purge -y -qq mita >/dev/null 2>&1 && ok "удалён mita" || warn "не смог удалить mita"
+  [ "${mita_ports:-0}" -gt 0 ] && warn "Mieru работал на mita — поставь его заново из меню, пароль сохранится"
+fi
+if dpkg -s mihomo >/dev/null 2>&1; then
+  systemctl disable --now mihomo >/dev/null 2>&1
+  apt-get purge -y -qq mihomo >/dev/null 2>&1 && ok "удалён mihomo" || warn "не смог удалить mihomo"
 fi
 
 # ---------------------------------------------------------- сертификат ----
+if [ "$NO_DOMAIN" = 0 ]; then   # ↓ сертификат — только с доменом
 step "сертификат" "wildcard через DNS-01"
 install -d -m 700 /etc/letsencrypt/cloudflare
 printf 'dns_cloudflare_api_token = %s\n' "$CF_TOKEN" > /etc/letsencrypt/cloudflare/token.ini
@@ -286,6 +339,7 @@ exit 0
 HOOK
 chmod +x /etc/letsencrypt/renewal-hooks/deploy/packetlab.sh
 ok "deploy-hook на продление"
+fi   # ↑ сертификат
 
 # ------------------------------------------------------------- тюнинг ----
 step "тюнинг ядра"
@@ -356,11 +410,18 @@ backend site
     server site 127.0.0.1:8080
 HAP
 fi
+# Без домена decoy-сайта нет (ему нужен сертификат домена). Трафик с чужим SNI
+# тогда отдаём REALITY: неопознанного клиента он сам пропускает к сайту, под
+# который маскируется, — сканер видит настоящий чужой сайт, а не обрыв.
+if [ "$NO_DOMAIN" = 1 ]; then
+  sed -i 's/^\(    server site 127\.0\.0\.1:\)8080$/\18443/' /etc/haproxy/haproxy.cfg
+fi
 haproxy -c -f /etc/haproxy/haproxy.cfg >/dev/null 2>&1 || die "haproxy.cfg невалиден"
 systemctl enable --now haproxy >/dev/null 2>&1
 ok "haproxy поднят"
 
 # ----------------------------------------------------------------- caddy -
+if [ "$NO_DOMAIN" = 0 ]; then   # ↓ decoy — только с доменом (нужен его сертификат)
 step "decoy-сайт" "то, что видит случайный гость"
 install -d /var/www/decoy
 cat > /var/www/decoy/index.html <<'HTML'
@@ -413,9 +474,10 @@ if systemctl is-active --quiet caddy; then
 else
   warn "caddy не поднялся: journalctl -u caddy -n 20 --no-pager"
 fi
+fi   # ↑ decoy
 
 # -------------------------------------------------------------- sing-box -
-step "sing-box" "пустой конфиг, инбаунды добавит меню"
+step "конфиг sing-box" "пустой, инбаунды добавит меню"
 install -d /etc/sing-box
 sb_before=$(md5sum /etc/sing-box/config.json 2>/dev/null | awk '{print $1}')
 if [ ! -f /etc/sing-box/config.json ]; then
@@ -596,6 +658,11 @@ if [ -n "$new_kern" ] && [ "$new_kern" != "$run_kern" ]; then
 fi
 
 head_ "готово" "протоколы ставятся из меню"
-printf '  %sпроверь, что A-запись %s → %s уже есть%s\n' "$C_GRY" "$DOMAIN" "$SERVER_IP" "$C_RST"
-printf '  %sподдомены протоколов создадутся автоматически%s\n\n' "$C_GRY" "$C_RST"
+if [ "$NO_DOMAIN" = 1 ]; then
+  printf '  %sбез домена: доступны REALITY, AnyTLS + REALITY и Mieru, в ссылках %s%s\n' "$C_GRY" "$SERVER_IP" "$C_RST"
+  printf '  %sподписки нет — ссылки и QR в меню, пункт l%s\n\n' "$C_GRY" "$C_RST"
+else
+  printf '  %sпроверь, что A-запись %s → %s уже есть%s\n' "$C_GRY" "$DOMAIN" "$SERVER_IP" "$C_RST"
+  printf '  %sподдомены протоколов создадутся автоматически%s\n\n' "$C_GRY" "$C_RST"
+fi
 printf '  запуск меню:  %spacketlab%s\n\n' "$C_B" "$C_RST"

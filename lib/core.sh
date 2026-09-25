@@ -10,6 +10,9 @@ PL_HAP=/etc/haproxy/haproxy.cfg
 
 PL_DOMAIN=$(python3 -c "import json;print(json.load(open('$PL_META'))['domain'])" 2>/dev/null || echo '')
 PL_USER=$(python3   -c "import json;print(json.load(open('$PL_META')).get('user','Boss'))" 2>/dev/null || echo Boss)
+# Адрес сервера в ссылках: домен, а без домена — IP. Без домена ставятся
+# только протоколы, которым не нужен свой сертификат (MOD_NEEDS_DOMAIN=no).
+PL_HOST=${PL_DOMAIN:-$(python3 -c "import json;print(json.load(open('$PL_META')).get('ip',''))" 2>/dev/null)}
 PL_CERT="/etc/letsencrypt/live/$PL_DOMAIN/fullchain.pem"
 PL_KEY="/etc/letsencrypt/live/$PL_DOMAIN/privkey.pem"
 
@@ -87,6 +90,18 @@ PY
     mv "$PL_SB.new" "$PL_SB"; return 0
   fi
   rm -f "$PL_SB.new"; ui_err "конфиг не прошёл проверку"; return 1
+}
+
+# Стоит ли сборка с Mieru (mbox)? По версии не отличить — mbox называет себя
+# тем же «sing-box 1.14.1», — поэтому спрашиваем сам бинарник: официальный
+# на такой инбаунд отвечает «unknown inbound type: mieru».
+pl_singbox_has_mieru() {
+  local t rc
+  t=$(mktemp)
+  printf '{"inbounds":[{"type":"mieru","tag":"t","listen":"127.0.0.1","listen_port":1,"transport":"TCP","users":[{"name":"t","password":"t"}]}]}' >"$t"
+  sing-box check -c "$t" >/dev/null 2>&1; rc=$?
+  rm -f "$t"
+  return $rc
 }
 
 pl_singbox_apply() {
@@ -217,6 +232,11 @@ pl_dns_ensure() {
     | grep -q '"success":true' || { ui_err "не смог создать A-запись $fqdn"; return 1; }
   ui_ok "создана A-запись $fqdn"
 }
+
+# Модулю нужен домен (сертификат, поддомен)? По умолчанию да: без домена
+# работают только те, кто явно объявил MOD_NEEDS_DOMAIN=no — REALITY-семейство
+# и Mieru. Модуль должен быть source'нут в этой (под)оболочке.
+pl_module_needs_domain() { [ "${MOD_NEEDS_DOMAIN:-yes}" != no ]; }
 
 # --------------------------------------------------------------- подписка -
 pl_sub_reload()  { systemctl restart packetlab-sub 2>/dev/null || true; }

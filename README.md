@@ -8,14 +8,21 @@
 curl -fsSL https://raw.githubusercontent.com/sovereignbrains/packetlab/main/install.sh | bash
 ```
 
-Debian 13, x86_64, root. Нужен домен в Cloudflare и API-токен с правами
-`Zone:DNS:Edit` — сертификат выпускается по DNS-01, wildcard.
+Debian 13, x86_64, root. Установщик спрашивает домен — дальше развилка:
+
+- **с доменом** — домен в Cloudflare и API-токен с правами `Zone:DNS:Edit`:
+  wildcard-сертификат по DNS-01, decoy-сайт, подписка, все протоколы.
+  Zone ID установщик находит по токену сам, спрашивает — только если токен зону не видит;
+- **без домена** (пустой Enter) — ни Cloudflare, ни сертификата: доступны REALITY,
+  AnyTLS + REALITY и Mieru, в ссылках IP сервера, подписки нет (ссылки и QR — в меню).
 
 Без интерактива (удобно для нескольких серверов):
 
 ```bash
 PL_DOMAIN=example.com PL_CF_TOKEN=... PL_CF_ZONE=... \
   bash <(curl -fsSL https://raw.githubusercontent.com/sovereignbrains/packetlab/main/install.sh)
+
+PL_NO_DOMAIN=1 bash <(curl -fsSL https://raw.githubusercontent.com/sovereignbrains/packetlab/main/install.sh)
 ```
 
 ⚠️ Установщик выполняет `ufw --force reset` — запускать только на чистом
@@ -37,13 +44,14 @@ packetlab install anytls-reality   # поставить модуль без ме
 |---|---|
 | Вход 443/tcp | haproxy, SNI-роутинг без терминации TLS |
 | Вход UDP | sing-box напрямую |
-| Протоколы | REALITY, AnyTLS, AnyTLS + REALITY, AnyTLS + ECH, TUIC, NaiveProxy, Hysteria2 (sing-box), Mieru (mita) |
-| Маскировка | Caddy, decoy-сайт по умолчанию |
+| Ядро | одно — sing-box в сборке [mbox](https://github.com/enfein/mbox): апстрим + протокол Mieru от его автора, пакет закреплён `apt-mark hold` |
+| Протоколы | REALITY, AnyTLS, AnyTLS + REALITY, AnyTLS + ECH, TUIC, NaiveProxy, Hysteria2, Mieru — все инбаунды sing-box |
+| Маскировка | Caddy, decoy-сайт (с доменом); без домена чужой SNI уходит в REALITY |
 | Подписка | один URL, формат по User-Agent |
 
-Karing и sing-box получают JSON с `urltest`, Shadowrocket — base64-список
-URI, остальные — Clash YAML. Naive и Mieru в Clash не уезжают: mihomo не
-знает первого, а формат подписки не резиновый.
+Подписка — sing-box JSON с `urltest`. Karing и Hiddify получают всё, официальный
+клиент sing-box — без Mieru: он этого протокола не знает (модуль помечен
+`MOD_CLIENTS=extended`).
 
 ## Модули
 

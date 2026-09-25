@@ -3,15 +3,16 @@
 
 pl_domain_or_unset() { [ -n "${PL_DOMAIN:-}" ] && printf '%s' "$PL_DOMAIN" || printf 'домен не задан'; }
 
+# Ядро одно — sing-box. mita и mihomo больше не ставятся: Mieru живёт
+# в sing-box (сборка mbox), а mihomo стоял пустым.
 pl_engine_line() {
-  local out=()
-  command -v sing-box >/dev/null && out+=("sing-box $(sing-box version 2>/dev/null | head -1 | awk '{print $3}')")
-  command -v mita     >/dev/null && out+=("mita")
-  command -v mihomo   >/dev/null && out+=("mihomo")
-  # IFS склеивает "${out[*]}" только первым своим символом, поэтому вручную.
-  local s='' x
-  for x in "${out[@]}"; do s="${s:+$s · }$x"; done
-  printf '%s' "$s"
+  command -v sing-box >/dev/null || { printf 'sing-box не установлен'; return; }
+  local v; v=$(sing-box version 2>/dev/null | head -1 | awk '{print $3}')
+  if pl_singbox_has_mieru; then
+    printf 'sing-box %s + mieru' "$v"
+  else
+    printf 'sing-box %s' "$v"
+  fi
 }
 
 pl_user_count() {

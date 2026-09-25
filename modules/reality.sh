@@ -7,6 +7,7 @@ MOD_PORT=8443
 MOD_PROTO=tcp
 MOD_VIA_HAPROXY=yes
 MOD_LEVEL=simple
+MOD_NEEDS_DOMAIN=no      # REALITY живёт на чужом сертификате — домен не нужен
 
 mod_status() {
   pl_singbox_has_tag "${MOD_ID}-in" || { printf off; return; }
@@ -58,7 +59,7 @@ mod_link() {
     clash) cat <<YAML
 - name: ${name}
   type: vless
-  server: ${PL_DOMAIN}
+  server: ${PL_HOST}
   port: 443
   uuid: $(pl_meta_get ${MOD_ID}_uuid)
   network: tcp
@@ -73,14 +74,14 @@ mod_link() {
 YAML
     ;;
     singbox) cat <<JSON
-{ "type":"vless","tag":"${name}","server":"${PL_DOMAIN}","server_port":443,
+{ "type":"vless","tag":"${name}","server":"${PL_HOST}","server_port":443,
   "uuid":"$(pl_meta_get ${MOD_ID}_uuid)","flow":"xtls-rprx-vision",
   "tls":{"enabled":true,"server_name":"$(pl_meta_get ${MOD_ID}_sni)","utls":{"enabled":true,"fingerprint":"chrome"},
     "reality":{"enabled":true,"public_key":"$(pl_meta_get ${MOD_ID}_pbk)","short_id":"$(pl_meta_get ${MOD_ID}_sid)"}} }
 JSON
     ;;
     uri) printf 'vless://%s@%s:443?security=reality&sni=%s&fp=chrome&pbk=%s&sid=%s&flow=xtls-rprx-vision&type=tcp#%s\n' \
-      "$(pl_meta_get ${MOD_ID}_uuid)" "$PL_DOMAIN" "$(pl_meta_get ${MOD_ID}_sni)" \
+      "$(pl_meta_get ${MOD_ID}_uuid)" "$PL_HOST" "$(pl_meta_get ${MOD_ID}_sni)" \
       "$(pl_meta_get ${MOD_ID}_pbk)" "$(pl_meta_get ${MOD_ID}_sid)" "$name" ;;
   esac
 }

@@ -52,12 +52,19 @@ def ask_module(mod: Path, fmt: str) -> str:
     return _run_module(mod, f"mod_link {fmt}")
 
 
-def engine(mod: Path) -> str:
-    """MOD_ENGINE модуля: sing-box, mita и т.п."""
+def mod_var(mod: Path, name: str) -> str:
+    """Значение MOD_<name> из шапки модуля (без хвостового комментария)."""
     for line in mod.read_text(errors="replace").splitlines():
-        if line.startswith("MOD_ENGINE="):
-            return line.split("=", 1)[1].strip().strip('"\'')
+        if line.startswith(f"MOD_{name}="):
+            return line.split("=", 1)[1].split("#", 1)[0].strip().strip('"\'')
     return ""
+
+
+def needs_extended_client(mod: Path) -> bool:
+    """MOD_CLIENTS=extended: протокол есть не у всех клиентов. Раньше это
+    угадывалось по ядру (не sing-box — значит, отдельный сервер), но Mieru теперь живёт
+    в sing-box (сборка mbox), а официальный клиент его по-прежнему не знает."""
+    return mod_var(mod, "CLIENTS") == "extended"
 
 
 def detect(ua: str) -> str:
@@ -77,7 +84,7 @@ def build(fmt: str) -> tuple[bytes, str]:
         fmt = "singbox"
     mods = [m for m in modules() if installed(m)]
     if strict:
-        mods = [m for m in mods if engine(m) == "sing-box"]
+        mods = [m for m in mods if not needs_extended_client(m)]
     parts = [ask_module(m, fmt) for m in mods]
     parts = [p for p in parts if p]
 
