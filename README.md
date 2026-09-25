@@ -5,8 +5,11 @@
 ## Установка
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/sovereignbrains/packetlab/main/install.sh | bash
+wget -qO- https://raw.githubusercontent.com/sovereignbrains/packetlab/main/install.sh | bash
 ```
+
+На чистом Debian 13 есть `wget`, а `curl` нет — установщик поставит его сам.
+Если `curl` уже стоит, можно и `curl -fsSL … | bash`.
 
 Debian 13, x86_64, root. Установщик спрашивает домен — дальше развилка:
 
@@ -20,9 +23,9 @@ Debian 13, x86_64, root. Установщик спрашивает домен �
 
 ```bash
 PL_DOMAIN=example.com PL_CF_TOKEN=... PL_CF_ZONE=... \
-  bash <(curl -fsSL https://raw.githubusercontent.com/sovereignbrains/packetlab/main/install.sh)
+  bash <(wget -qO- https://raw.githubusercontent.com/sovereignbrains/packetlab/main/install.sh)
 
-PL_NO_DOMAIN=1 bash <(curl -fsSL https://raw.githubusercontent.com/sovereignbrains/packetlab/main/install.sh)
+PL_NO_DOMAIN=1 bash <(wget -qO- https://raw.githubusercontent.com/sovereignbrains/packetlab/main/install.sh)
 ```
 
 ⚠️ Установщик выполняет `ufw --force reset` — запускать только на чистом

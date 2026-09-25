@@ -99,6 +99,16 @@ elif [ "${VERSION_ID:-0}" -lt 13 ] 2>/dev/null; then
 fi
 [ "$(uname -m)" = x86_64 ] || warn "архитектура $(uname -m), пакеты подбирались под amd64"
 
+# На чистом Debian 13 curl нет (есть wget), а он нужен уже на вопросах: проверка
+# токена Cloudflare и поиск Zone ID. Без него любой токен выглядел бы отвергнутым,
+# и вопрос про токен повторялся бы по кругу.
+if ! command -v curl >/dev/null 2>&1; then
+  say "ставлю curl…"
+  DEBIAN_FRONTEND=noninteractive apt-get update -qq \
+    && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq curl ca-certificates >/dev/null \
+    || die "не смог поставить curl"
+fi
+
 head_ "packetlab" "установка с нуля · $(date +%F)"
 
 # ---------------------------------------------------------------- ввод ----
