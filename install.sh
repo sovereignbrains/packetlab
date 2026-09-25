@@ -35,11 +35,48 @@ head_() {
   [ $# -gt 1 ] && printf '  %s%s%s\n' "$C_GRY" "$2" "$C_RST"
   printf '%s%s%s\n' "$C_GRY" "$(printf '━%.0s' $(seq 1 60))" "$C_RST"
 }
+# Шаг установки — одна строка, а не рамка: рамка на каждом шаге превращала
+# лог в стену одинаковых блоков. Рамка остаётся только в начале и в конце.
+PL_STEP=0; PL_STEPS=9
+step() {
+  PL_STEP=$((PL_STEP+1))
+  printf '\n%s──%s %s%s/%s%s  %s%s%s' "$C_GRY" "$C_RST" "$C_GRY" "$PL_STEP" "$PL_STEPS" "$C_RST" "$C_B$C_CYN" "$1" "$C_RST"
+  [ $# -gt 1 ] && printf '  %s%s%s' "$C_GRY" "$2" "$C_RST"
+  printf '\n'
+}
+err() { printf '  %s✗%s %s\n' "$C_RED" "$C_RST" "$*" >&2; }
+
+# Windows-клиенты SSH (OpenSSH, ssh2) не включают на pty режим IUTF8: ядро
+# считает русскую букву двумя символами, и лишний Backspace съедает уже
+# напечатанное приглашение. Включаем сами — режим остаётся и после скрипта.
+stty iutf8 2>/dev/null </dev/tty
+
 ask() {
   local p="$1" d="${2:-}" a
-  if [ -n "$d" ]; then printf '  ? %s [%s] ' "$p" "$d" >&2; else printf '  ? %s ' "$p" >&2; fi
+  if [ -n "$d" ]; then
+    printf '  %s?%s %s %s[%s]%s\n' "$C_CYN" "$C_RST" "$p" "$C_GRY" "$d" "$C_RST" >&2
+  else
+    printf '  %s?%s %s\n' "$C_CYN" "$C_RST" "$p" >&2
+  fi
+  # Ответ на отдельной строке, как в меню packetlab: Backspace не поднимается
+  # на строку выше, так что вопрос остаётся целым.
+  printf '  %s>%s ' "$C_CYN" "$C_RST" >&2
   read -r a </dev/tty
   printf '%s' "${a:-$d}"
+}
+
+valid_domain() {
+  [[ "$1" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$ ]]
+}
+cf_token_ok() {
+  curl -fsS -H "Authorization: Bearer $1" \
+    https://api.cloudflare.com/client/v4/user/tokens/verify 2>/dev/null | grep -q '"success":true'
+}
+# Zone ID по имени домена. Нужны права на чтение зоны; нет прав — вернёт пусто.
+cf_zone_lookup() {
+  curl -fsS -H "Authorization: Bearer $1" \
+    "https://api.cloudflare.com/client/v4/zones?name=$2" 2>/dev/null \
+    | grep -o '"id":"[0-9a-f]\{32\}"' | head -1 | cut -d'"' -f4
 }
 
 # --------------------------------------------------------------- проверки -
@@ -66,23 +103,55 @@ CF_ZONE="${PL_CF_ZONE:-}"
 PL_USER="${PL_USER:-Boss}"     # метка пользователя внутри инбаундов,
                                # в именах нод не используется
 
-[ -n "$DOMAIN" ]   || DOMAIN=$(ask "домен (без поддомена)")
-[ -n "$DOMAIN" ]   || die "домен обязателен"
-[ -n "$CF_TOKEN" ] || CF_TOKEN=$(ask "Cloudflare API token (Zone:DNS:Edit)")
-[ -n "$CF_TOKEN" ] || die "токен обязателен для DNS-01"
-[ -n "$CF_ZONE" ]  || CF_ZONE=$(ask "Cloudflare Zone ID")
-
-SERVER_IP=$(curl -fsS --max-time 10 https://api.ipify.org 2>/dev/null || hostname -I | awk '{print $1}')
-say "внешний IP: $SERVER_IP"
+# Ошибка в ответе — переспрашиваем, а не выходим: раньше пустой Enter
+# в первом же вопросе выкидывал в shell, и установку начинали заново.
+# Заданное через окружение не переспрашивается — там ошибка фатальна.
+if [ -n "$DOMAIN" ]; then
+  valid_domain "$DOMAIN" || die "PL_DOMAIN=$DOMAIN — не похоже на домен"
+else
+  while true; do
+    DOMAIN=$(ask "домен без поддомена, например example.com")
+    DOMAIN=${DOMAIN#*://}; DOMAIN=${DOMAIN%%/*}; DOMAIN=${DOMAIN,,}
+    valid_domain "$DOMAIN" && break
+    err "нужен домен вида example.com"
+  done
+fi
 
 # Токены при копипасте с телефона регулярно теряют последний символ —
 # проверяем сразу, а не после получаса установки.
-say "проверяю токен…"
-if ! curl -fsS -H "Authorization: Bearer $CF_TOKEN" \
-     https://api.cloudflare.com/client/v4/user/tokens/verify 2>/dev/null | grep -q '"success":true'; then
-  die "Cloudflare отверг токен. Частая причина — при копировании потерялся последний символ."
+if [ -n "$CF_TOKEN" ]; then
+  say "проверяю токен…"
+  cf_token_ok "$CF_TOKEN" \
+    || die "Cloudflare отверг PL_CF_TOKEN. Частая причина — при копировании потерялся последний символ."
+else
+  while true; do
+    CF_TOKEN=$(ask "Cloudflare API token (права Zone → DNS → Edit)")
+    if [ -z "$CF_TOKEN" ]; then err "без токена не выпустить сертификат (DNS-01)"; continue; fi
+    say "проверяю токен…"
+    cf_token_ok "$CF_TOKEN" && break
+    err "Cloudflare отверг токен — проверь, что скопирован целиком"
+  done
 fi
 ok "токен принят"
+
+# Zone ID сначала пробуем узнать сами — вручную его ищут дольше всего.
+if [ -z "$CF_ZONE" ]; then
+  CF_ZONE=$(cf_zone_lookup "$CF_TOKEN" "$DOMAIN")
+  if [ -n "$CF_ZONE" ]; then
+    ok "Zone ID найден сам: $CF_ZONE"
+  else
+    say "токен не видит зону $DOMAIN — Zone ID нужен вручную"
+    say "Cloudflare → $DOMAIN → Overview → справа внизу «Zone ID»"
+    while true; do
+      CF_ZONE=$(ask "Cloudflare Zone ID")
+      [[ "$CF_ZONE" =~ ^[0-9a-f]{32}$ ]] && break
+      err "Zone ID — 32 символа 0-9 и a-f"
+    done
+  fi
+fi
+
+SERVER_IP=$(curl -fsS --max-time 10 https://api.ipify.org 2>/dev/null || hostname -I | awk '{print $1}')
+say "внешний IP: $SERVER_IP"
 
 # A-запись домена. Сертификат выпустится и без неё (DNS-01), но клиент
 # в такой сервер не попадёт — предупреждаем до, а не после установки.
@@ -97,7 +166,7 @@ else
 fi
 
 # --------------------------------------------------------------- пакеты ---
-head_ "пакеты"
+step "пакеты"
 export DEBIAN_FRONTEND=noninteractive
 export NEEDRESTART_MODE=a          # не спрашивать, какие сервисы перезапустить
 say "apt update…"
@@ -157,7 +226,7 @@ fetch_deb() {   # fetch_deb <owner/repo> <шаблон-имени>
   rm -f "$tmp"
 }
 
-head_ "ядра"
+step "ядра"
 if command -v sing-box >/dev/null; then
   ok "sing-box уже стоит: $(sing-box version | head -1 | awk '{print $3}')"
 else
@@ -180,7 +249,7 @@ else
 fi
 
 # ---------------------------------------------------------- сертификат ----
-head_ "сертификат" "wildcard через DNS-01"
+step "сертификат" "wildcard через DNS-01"
 install -d -m 700 /etc/letsencrypt/cloudflare
 printf 'dns_cloudflare_api_token = %s\n' "$CF_TOKEN" > /etc/letsencrypt/cloudflare/token.ini
 chmod 600 /etc/letsencrypt/cloudflare/token.ini
@@ -219,7 +288,7 @@ chmod +x /etc/letsencrypt/renewal-hooks/deploy/packetlab.sh
 ok "deploy-hook на продление"
 
 # ------------------------------------------------------------- тюнинг ----
-head_ "тюнинг ядра"
+step "тюнинг ядра"
 cat > /etc/sysctl.d/99-packetlab.conf <<'SYS'
 # QUIC (TUIC, Hysteria2) упирается в размер UDP-буферов: без этого
 # quic-go пишет предупреждение в лог и режет пропускную способность.
@@ -240,7 +309,7 @@ sysctl -p /etc/sysctl.d/99-packetlab.conf >/dev/null 2>&1
   && ok "bbr + fq, буферы 16 МБ" || warn "bbr не активировался, проверь модуль ядра"
 
 # -------------------------------------------------------------- firewall -
-head_ "firewall"
+step "firewall"
 ufw --force disable >/dev/null 2>&1
 ufw --force reset >/dev/null 2>&1
 ufw default deny incoming >/dev/null
@@ -251,7 +320,7 @@ ufw --force enable >/dev/null
 ok "открыты: SSH, 443/tcp. Порты протоколов откроются при их установке"
 
 # --------------------------------------------------------------- haproxy -
-head_ "haproxy" "SNI-мультиплексор на 443/tcp"
+step "haproxy" "SNI-мультиплексор на 443/tcp"
 [ -f /etc/haproxy/haproxy.cfg ] && cp -a /etc/haproxy/haproxy.cfg "/etc/haproxy/haproxy.cfg.orig-$(date +%s)"
 
 # Правила use_backend дописывают в этот файл модули протоколов. Перезапись
@@ -292,7 +361,7 @@ systemctl enable --now haproxy >/dev/null 2>&1
 ok "haproxy поднят"
 
 # ----------------------------------------------------------------- caddy -
-head_ "decoy-сайт" "то, что видит случайный гость"
+step "decoy-сайт" "то, что видит случайный гость"
 install -d /var/www/decoy
 cat > /var/www/decoy/index.html <<'HTML'
 <!doctype html><html lang="en"><head><meta charset="utf-8">
@@ -346,7 +415,7 @@ else
 fi
 
 # -------------------------------------------------------------- sing-box -
-head_ "sing-box" "пустой конфиг, инбаунды добавит меню"
+step "sing-box" "пустой конфиг, инбаунды добавит меню"
 install -d /etc/sing-box
 sb_before=$(md5sum /etc/sing-box/config.json 2>/dev/null | awk '{print $1}')
 if [ ! -f /etc/sing-box/config.json ]; then
@@ -404,7 +473,7 @@ else
 fi
 
 # ------------------------------------------------------------ packetlab --
-head_ "packetlab"
+step "packetlab"
 install -d "$PL_ROOT/lib" "$PL_ROOT/modules" "$PL_ROOT/relay" "$PL_ROOT/sub" "$PL_ETC" "$PL_VAR"
 
 get() {  # get <путь-в-репо> <куда>

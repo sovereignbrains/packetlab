@@ -77,7 +77,7 @@ menu_main() {
 
   while true; do
     mode=$(pl_ui_mode)
-    ui_head "packetlab" "$(pl_domain_or_unset) · $(pl_engine_line)"
+    ui_screen "packetlab" "$(pl_domain_or_unset) · $(pl_engine_line)"
 
     # Установленные — сверху, остальные ниже отдельным списком. Номера
     # сквозные: visible = installed + available. mod_status дёргается
@@ -132,7 +132,7 @@ menu_main() {
     case "$choice" in
       ''|q|Q) printf '\n'; exit 0 ;;
       m|M) ui_mode_toggle ;;
-      s) menu_health ;;
+      s) [ -t 1 ] && printf '\033[H\033[2J'; menu_health ;;
       u) menu_users ;;
       l) menu_sub ;;
       c) menu_cert ;;
@@ -216,7 +216,7 @@ menu_module() {
 
   while true; do
     state=$(mod_call "$f" mod_status)
-    ui_head "$name" "$(mod_meta "$f" MOD_DESC) · $(mod_meta "$f" MOD_ENGINE)"
+    ui_screen "$name" "$(mod_meta "$f" MOD_DESC) · $(mod_meta "$f" MOD_ENGINE)"
 
     printf '  состояние: %s\n' "$(ui_badge "$state")"
     case "$state" in
@@ -261,7 +261,8 @@ menu_module() {
            && { mod_call "$f" mod_remove && ui_ok "удалён"; }
          ui_ask "enter" >/dev/null ;;
       4) pl_ufw_open "$(mod_meta "$f" MOD_PORT)" "$(mod_meta "$f" MOD_PROTO)" \
-           "$(mod_meta "$f" MOD_ID)" && ui_ok "правило добавлено" ;;
+           "$(mod_meta "$f" MOD_ID)" && ui_ok "правило добавлено"
+         ui_ask "enter" >/dev/null ;;   # иначе экран очистится раньше, чем прочитаешь
       b|B|'') return ;;
     esac
   done
@@ -307,7 +308,7 @@ menu_users() {
   local n i name tok mode
   mode=$(pl_ui_mode)
   while true; do
-    ui_head "пользователи" "подпиской владеет первый в списке"
+    ui_screen "пользователи" "подпиской владеет первый в списке"
     ui_section "список"
     while read -r i name tok; do
       ui_row "" "$name" "" "$tok"
@@ -387,7 +388,7 @@ menu_sub() {
   [ -z "$PL_DOMAIN" ] && { menu_sub_nodomain; return; }
   while true; do
     url=$(pl_sub_url)
-    ui_head "ссылка-подписка" "формат выбирается по User-Agent клиента"
+    ui_screen "ссылка-подписка" "формат выбирается по User-Agent клиента"
 
     if [ -n "$url" ]; then
       printf '\n  %s\n' "$url"
@@ -440,7 +441,7 @@ menu_cert() {
   local l mode
   mode=$(pl_ui_mode)
   while true; do
-    ui_head "сертификат" "wildcard, DNS-01 через Cloudflare"
+    ui_screen "сертификат" "wildcard, DNS-01 через Cloudflare"
     if [ -f "$PL_CERT" ]; then
       ui_row "" "$PL_DOMAIN" "$(pl_cert_state)" "$(pl_cert_days)"
       ui_note "истекает: $(openssl x509 -in "$PL_CERT" -noout -enddate 2>/dev/null | cut -d= -f2)"
@@ -504,7 +505,7 @@ menu_sysctl() {
     q=$(sysctl -n net.core.default_qdisc 2>/dev/null || echo '?')
     c=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo '?')
 
-    ui_head "тюнинг ядра" "буферы UDP · bbr + fq"
+    ui_screen "тюнинг ядра" "буферы UDP · bbr + fq"
     ui_row "" "rmem_max" "$([ "$r" -ge 16777216 ] && printf up || printf off)" "$r"
     ui_row "" "wmem_max" "$([ "$w" -ge 16777216 ] && printf up || printf off)" "$w"
     ui_row "" "qdisc"    "$([ "$q" = fq ] && printf up || printf off)"  "$q"

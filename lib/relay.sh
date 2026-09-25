@@ -13,7 +13,7 @@ menu_relay() {
   local st ex tok
   while true; do
     st=$(plr state); ex=$(plr exit-state)
-    ui_head "вход → выход" "клиенты → этот сервер → выход; подписка не меняется"
+    ui_screen "вход → выход" "клиенты → этот сервер → выход; подписка не меняется"
 
     ui_section "этот сервер как вход"
     case "$st" in
