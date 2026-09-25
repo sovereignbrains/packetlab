@@ -52,56 +52,68 @@ ui_mode_toggle() {
 # Серая подсказка внизу главного меню: что скрыто и как это открыть.
 ui_mode_hint() {
   local mode="$1" f lvl st hidden=()
-  if [ "$mode" = advanced ]; then
-    ui_note "m — вернуться в простой режим"
-    return
-  fi
+  [ "$mode" = advanced ] && return
   for f in "${MODULES[@]}"; do
     lvl=$(mod_meta "$f" MOD_LEVEL)
     [ "$lvl" = advanced ] || continue
     st=$(mod_call "$f" mod_status)
     [ "$st" = off ] && hidden+=("$(mod_meta "$f" MOD_NAME)")
   done
-  local extra="тюнинг ядра, добавление/удаление пользователей, продление сертификата"
-  if [ "${#hidden[@]}" -gt 0 ]; then
-    local IFS=', '
-    ui_note "скрыто: ${hidden[*]}, $extra — m открывает всё"
-  else
-    ui_note "скрыто: $extra — m открывает всё"
-  fi
+  local list='' x
+  for x in "${hidden[@]}" "тюнинг ядра" "правка пользователей" "продление сертификата"; do
+    list="${list:+$list, }$x"
+  done
+  ui_note "скрыто: $list"
 }
 
 # ---------------------------------------------------------------- меню ----
+# Строка протокола в главном меню; номер — позиция в visible.
+menu_main_row() {  # menu_main_row <номер> <файл> <состояние>
+  ui_row "$1" "$(mod_meta "$2" MOD_NAME)" "$3" "$(mod_meta "$2" MOD_PORT)/$(mod_meta "$2" MOD_PROTO)"
+}
+
 menu_main() {
-  local i choice f lvl name state port mode visible=()
+  local i choice f mode visible=() installed=() available=() states=()
 
   while true; do
     mode=$(pl_ui_mode)
     ui_head "packetlab" "$(pl_domain_or_unset) · $(pl_engine_line)"
 
-    ui_section "протоколы"
-    visible=()
+    # Установленные — сверху, остальные ниже отдельным списком. Номера
+    # сквозные: visible = installed + available. mod_status дёргается
+    # один раз на модуль — он смотрит в конфиг, порты и UFW, это не бесплатно.
+    installed=(); available=(); states=()
     for f in "${MODULES[@]}"; do
-      if [ "$mode" = advanced ]; then
-        visible+=("$f")
-      else
-        lvl=$(mod_meta "$f" MOD_LEVEL)
-        state=$(mod_call "$f" mod_status)
-        { [ "$lvl" = simple ] || [ "$state" != off ]; } && visible+=("$f")
+      choice=$(mod_call "$f" mod_status)
+      states+=("${choice:-?}")    # модуль упал — пусть будет «?», а не пустота
+      if [ "${states[-1]}" != off ]; then
+        installed+=("${#states[@]}")
+      elif [ "$mode" = advanced ] || [ "$(mod_meta "$f" MOD_LEVEL)" = simple ]; then
+        available+=("${#states[@]}")
       fi
     done
+    visible=()
     i=1
-    for f in "${visible[@]}"; do
-      name=$(mod_meta "$f" MOD_NAME)
-      port=$(mod_meta "$f" MOD_PORT)/$(mod_meta "$f" MOD_PROTO)
-      state=$(mod_call "$f" mod_status)
-      ui_row "$i" "$name" "$state" "$port"
+
+    ui_section "протоколы"
+    [ "${#installed[@]}" -eq 0 ] && ui_note "ни один не установлен"
+    for f in "${installed[@]}"; do
+      visible+=("${MODULES[$((f-1))]}")
+      menu_main_row "$i" "${MODULES[$((f-1))]}" "${states[$((f-1))]}"
       i=$((i+1))
     done
+    if [ "${#available[@]}" -gt 0 ]; then
+      ui_section "можно установить"
+      for f in "${available[@]}"; do
+        visible+=("${MODULES[$((f-1))]}")
+        menu_main_row "$i" "${MODULES[$((f-1))]}" off
+        i=$((i+1))
+      done
+    fi
 
     ui_section "сервер"
     ui_row "s" "статус и диагностика"   "$(pl_health)"   ""
-    ui_row "u" "пользователи"           "up"             "$(pl_user_count)"
+    ui_row "u" "пользователи"           ""               "всего: $(pl_user_count)"
     ui_row "l" "ссылка-подписка"        "$(pl_sub_state)" ""
     ui_row "c" "сертификат"             "$(pl_cert_state)" "$(pl_cert_days)"
     ui_row "r" "вход → выход"           "$(pl_relay_badge)" "$(plr where)"
@@ -110,11 +122,11 @@ menu_main() {
     ui_section ""
     ui_mode_hint "$mode"
     if [ "$mode" = advanced ]; then
-      printf '  %sm%s  простой режим\n' "$C_B" "$C_RST"
+      ui_key m "простой режим"
     else
-      printf '  %sm%s  расширенный режим\n' "$C_B" "$C_RST"
+      ui_key m "расширенный режим"
     fi
-    printf '  %sq%s  выход\n\n' "$C_B" "$C_RST"
+    ui_key q "выход"; printf '\n'
 
     choice=$(ui_ask "выбор")
     case "$choice" in
@@ -215,15 +227,15 @@ menu_module() {
 
     ui_section ""
     case "$state" in
-      off) ui_row "1" "установить" "off" "" ;;
+      off) ui_key 1 "установить" ;;
       *)
-        ui_row "1" "показать ссылку"  "up" ""
-        ui_row "2" "переустановить"   "up" ""
-        ui_row "3" "удалить"          "up" ""
-        [ "$state" = blocked ] && ui_row "4" "починить firewall" "blocked" ""
+        ui_key 1 "показать ссылку"
+        ui_key 2 "переустановить"
+        ui_key 3 "удалить"
+        [ "$state" = blocked ] && ui_key 4 "починить firewall"
         ;;
     esac
-    printf '  %sb%s  назад\n\n' "$C_B" "$C_RST"
+    ui_key b назад; printf '\n'
 
     case "$(ui_ask "выбор")" in
       1) if [ "$state" = off ]; then
@@ -298,15 +310,15 @@ menu_users() {
     ui_head "пользователи" "подпиской владеет первый в списке"
     ui_section "список"
     while read -r i name tok; do
-      ui_row "$i" "$name" up "$tok"
+      ui_row "" "$name" "" "$tok"
     done < <(pl_users_list)
 
     ui_section ""
     if [ "$mode" = advanced ]; then
-      ui_row "1" "добавить" up ""
-      ui_row "2" "удалить"  up ""
+      ui_key 1 "добавить"
+      ui_key 2 "удалить"
     fi
-    printf '  %sb%s  назад\n\n' "$C_B" "$C_RST"
+    ui_key b назад; printf '\n'
 
     case "$(ui_ask "выбор")" in
       1) [ "$mode" = advanced ] || { ui_err "нет такого пункта"; sleep 1; continue; }
@@ -385,10 +397,10 @@ menu_sub() {
     fi
 
     ui_section ""
-    ui_row "1" "проверить отдачу"     "$(pl_sub_state)" ""
-    ui_row "2" "сменить токен"        up ""
-    ui_row "3" "перезапустить сервер" "$(pl_sub_state)" ""
-    printf '  %sb%s  назад\n\n' "$C_B" "$C_RST"
+    ui_key 1 "проверить отдачу"
+    ui_key 2 "сменить токен"
+    ui_key 3 "перезапустить сервер"
+    ui_key b назад; printf '\n'
 
     case "$(ui_ask "выбор")" in
       1) # Спрашиваем напрямую у сервера подписок: так проверяется он сам,
@@ -437,13 +449,13 @@ menu_cert() {
     fi
 
     ui_section ""
-    ui_row "1" "проверить продление (dry-run)" up ""
+    ui_key 1 "проверить продление (dry-run)"
     if [ "$mode" = advanced ]; then
-      ui_row "2" "продлить принудительно"        up ""
+      ui_key 2 "продлить принудительно"
       ui_row "3" "показать deploy-hook" \
         "$([ -x /etc/letsencrypt/renewal-hooks/deploy/packetlab.sh ] && printf up || printf off)" ""
     fi
-    printf '  %sb%s  назад\n\n' "$C_B" "$C_RST"
+    ui_key b назад; printf '\n'
 
     case "$(ui_ask "выбор")" in
       1) ui_info "certbot renew --dry-run, около минуты…"
@@ -500,9 +512,9 @@ menu_sysctl() {
     ui_row "" "файл"     "$([ -f "$PL_SYSCTL" ] && printf up || printf off)" "$PL_SYSCTL"
 
     ui_section ""
-    ui_row "1" "применить заново" up ""
-    ui_row "2" "убрать тюнинг"    up ""
-    printf '  %sb%s  назад\n\n' "$C_B" "$C_RST"
+    ui_key 1 "применить заново"
+    ui_key 2 "убрать тюнинг"
+    ui_key b назад; printf '\n'
 
     case "$(ui_ask "выбор")" in
       1) if [ -f "$PL_SYSCTL" ]; then

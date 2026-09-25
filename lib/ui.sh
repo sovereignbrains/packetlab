@@ -47,7 +47,10 @@ ui_head() {
   printf '%s%s%s\n' "$C_DIM" "$(ui_repeat "$w" '━')" "$C_RST"
 }
 
-ui_section() { printf '\n  %s%s%s\n' "$C_DIM" "$1" "$C_RST"; }
+ui_section() {
+  [ -n "$1" ] || { printf '\n'; return; }
+  printf '\n  %s%s%s\n' "$C_DIM" "$1" "$C_RST"
+}
 
 # ---------------------------------------------------------------- статусы ---
 # up      — работает: конфиг, порт и firewall согласованы
@@ -62,8 +65,17 @@ ui_badge() {
     off)     printf '%s○%s %soff%s'     "$C_GRY" "$C_RST" "$C_GRY" "$C_RST" ;;
     broken)  printf '%s▲%s %sbroken%s'  "$C_RED" "$C_RST" "$C_RED" "$C_RST" ;;
     ready)   printf '%s◐%s %sready%s'   "$C_CYN" "$C_RST" "$C_CYN" "$C_RST" ;;
+    '')      ;;                          # строка без статуса
     *)       printf '%s?%s'             "$C_GRY" "$C_RST" ;;
   esac
+}
+
+# Значок, добитый пробелами до ширины самого длинного («▲ broken»),
+# чтобы колонка примечаний не прыгала от статуса к статусу.
+UI_BADGE_W=8
+ui_badge_padded() {
+  local b; b=$(ui_badge "$1")
+  printf '%s%s' "$b" "$(ui_repeat $(( UI_BADGE_W - $(ui_vlen "$b") )) ' ')"
 }
 
 # ui_row <ключ> <название> <статус> <порт/примечание>
@@ -85,12 +97,17 @@ ui_row() {
   [ "${#name}" -gt "$namew" ] && name="${name:0:$((namew-1))}…"
   pad=$(ui_repeat $(( namew - ${#name} )) ' ')
 
-  printf '  %s%2s%s  %s%s  %s' "$C_B" "$key" "$C_RST" "$name" "$pad" "$badge"
   if ! ui_narrow && [ -n "$note" ]; then
-    printf '  %s%s%s' "$C_GRY" "$note" "$C_RST"
+    badge=$(ui_badge_padded "$state")
+    printf '  %s%2s%s  %s%s  %s  %s%s%s\n' "$C_B" "$key" "$C_RST" "$name" "$pad" "$badge" "$C_GRY" "$note" "$C_RST"
+  else
+    printf '  %s%2s%s  %s%s  %s\n' "$C_B" "$key" "$C_RST" "$name" "$pad" "$badge"
   fi
-  printf '\n'
 }
+
+# ui_key <клавиша> <подпись> — пункт без статуса («назад», «выход»),
+# клавиша в той же колонке, что и у ui_row.
+ui_key() { printf '  %s%2s%s  %s\n' "$C_B" "$1" "$C_RST" "$2"; }
 
 # ------------------------------------------------------------- сообщения ---
 ui_ok()   { printf '  %s✓%s %s\n' "$C_GRN" "$C_RST" "$*"; }

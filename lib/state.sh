@@ -8,7 +8,10 @@ pl_engine_line() {
   command -v sing-box >/dev/null && out+=("sing-box $(sing-box version 2>/dev/null | head -1 | awk '{print $3}')")
   command -v mita     >/dev/null && out+=("mita")
   command -v mihomo   >/dev/null && out+=("mihomo")
-  local IFS=' + '; printf '%s' "${out[*]}"
+  # IFS склеивает "${out[*]}" только первым своим символом, поэтому вручную.
+  local s='' x
+  for x in "${out[@]}"; do s="${s:+$s · }$x"; done
+  printf '%s' "$s"
 }
 
 pl_user_count() {

@@ -27,21 +27,21 @@ menu_relay() {
 
     ui_section ""
     if [ "$st" = off ]; then
-      ui_row "1" "связать по токену выхода" off ""
+      ui_key 1 "связать по токену выхода"
     else
-      ui_row "1" "проверить"               "$(pl_relay_badge)" ""
-      if [ "$st" = on ]; then ui_row "2" "вернуть трафик напрямую" up ""
-      else ui_row "2" "пустить трафик через выход" ready ""; fi
-      ui_row "3" "заменить токен"          "$(pl_relay_badge)" ""
-      ui_row "4" "отвязать"                "$(pl_relay_badge)" ""
+      ui_key 1 "проверить"
+      if [ "$st" = on ]; then ui_key 2 "вернуть трафик напрямую"
+      else ui_key 2 "пустить трафик через выход"; fi
+      ui_key 3 "заменить токен"
+      ui_key 4 "отвязать"
     fi
     if [ "$ex" = up ]; then
-      ui_row "5" "показать токен выхода" up ""
-      ui_row "6" "перестать быть выходом" up ""
+      ui_key 5 "показать токен выхода"
+      ui_key 6 "перестать быть выходом"
     else
-      ui_row "5" "стать выходом"         off ""
+      ui_key 5 "стать выходом"
     fi
-    printf '  %sb%s  назад\n\n' "$C_B" "$C_RST"
+    ui_key b назад; printf '\n'
 
     case "$(ui_ask "выбор")" in
       1) if [ "$st" = off ]; then
