@@ -10,32 +10,33 @@ MOD_VIA_HAPROXY=yes
 MOD_LEVEL=simple
 # В Clash YAML типа naive нет — нода уезжает только в sing-box JSON и в URI.
 MOD_NO_CLASH=yes
+# naive проверяет пару логин+пароль: логин — имя пользователя packetlab
+MOD_USERS='{"username":"%name%","password":"%pass%"}'
 
 mod_status() {
   pl_singbox_has_tag "${MOD_ID}-in" || { printf off; return; }
   pl_port_listening "$MOD_PORT" tcp || { printf down; return; }
   pl_ufw_allows 443 tcp || { printf blocked; return; }
   pl_haproxy_has_backend "$MOD_ID" || { printf broken; return; }
-  pl_meta_has naive_pass || { printf broken; return; }
+  pl_meta_has naive_sni || { printf broken; return; }
   printf up
 }
 
 mod_install() {
   pl_singbox_has_tag "${MOD_ID}-in" && { ui_err "инбаунд ${MOD_ID}-in уже есть — сначала удалить"; return 1; }
-  local pass sni="${MOD_SNI_LABEL}.${PL_DOMAIN}"
-  pass=$(pl_secret)
+  local users sni="${MOD_SNI_LABEL}.${PL_DOMAIN}"
   pl_dns_ensure "$MOD_SNI_LABEL" || return 1
+  users=$(pl_inbound_users) || return 1
   pl_singbox_add_inbound "$(cat <<JSON
 { "type":"naive","tag":"${MOD_ID}-in","listen":"127.0.0.1","listen_port":${MOD_PORT},
   "network":"tcp",
-  "users":[{"username":"${PL_USER}","password":"${pass}"}],
+  "users":${users},
   "tls":{"enabled":true,"server_name":"${sni}",
     "certificate_path":"${PL_CERT}","key_path":"${PL_KEY}"} }
 JSON
 )" || return 1
   pl_haproxy_add_sni "$sni" "$MOD_ID" "$MOD_PORT" || return 1
   pl_ufw_sync_module
-  pl_meta_set "${MOD_ID}_pass" "$pass"
   pl_meta_set "${MOD_ID}_sni"  "$sni"
   pl_singbox_apply && pl_sub_reload
 }
@@ -47,17 +48,18 @@ mod_remove() {
   pl_singbox_apply && pl_sub_reload
 }
 
-mod_link() {
-  local name="Naive"
+mod_link() {  # mod_link <формат> [пользователь]
+  local name="Naive" u pass
+  u=$(pl_link_user "${2:-}"); pass=$(pl_cred "$u" "$MOD_ID" pass) || return 1
   case "$1" in
     clash) : ;;   # mihomo не знает naive
     singbox) cat <<JSON
 { "type":"naive","tag":"${name}","server":"$(pl_meta_get ${MOD_ID}_sni)","server_port":443,
-  "username":"${PL_USER}","password":"$(pl_meta_get ${MOD_ID}_pass)","quic":false,
+  "username":"${u}","password":"${pass}","quic":false,
   "tls":{"enabled":true,"server_name":"$(pl_meta_get ${MOD_ID}_sni)"} }
 JSON
     ;;
     uri) printf 'naive+https://%s:%s@%s:443#%s\n' \
-      "$PL_USER" "$(pl_urlenc "$(pl_meta_get ${MOD_ID}_pass)")" "$(pl_meta_get ${MOD_ID}_sni)" "$name" ;;
+      "$(pl_urlenc "$u")" "$(pl_urlenc "$pass")" "$(pl_meta_get ${MOD_ID}_sni)" "$name" ;;
   esac
 }

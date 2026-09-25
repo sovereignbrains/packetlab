@@ -309,61 +309,98 @@ menu_health() {
 }
 
 # ------------------------------------------------------- пользователи ----
-# users.json — список объектов {name, sub_token}. Первый в списке владеет
-# подпиской: сервер подписок берёт токен нулевого элемента.
-pl_users_list() {
-  python3 -c "
-import json
-for i,u in enumerate(json.load(open('$PL_USERS')),1):
-    print(i, u.get('name','?'), u.get('sub_token','')[:8]+'…')" 2>/dev/null
+# users.json — [{name, sub_token, creds}], первый — владелец. Ключи у каждого
+# пользователя свои в каждом протоколе (lib/users.py): удаление убирает их из
+# инбаундов, и доступ действительно пропадает.
+
+# Пользователи → во все установленные инбаунды. sing-box перезапускается,
+# только если конфиг реально поменялся.
+pl_users_apply() {
+  local f tpl r pairs=()
+  for f in "${MODULES[@]}"; do
+    tpl=$(mod_meta "$f" MOD_USERS)
+    [ -n "$tpl" ] && pairs+=("$(mod_meta "$f" MOD_ID)=$tpl")
+  done
+  r=$(pl_users sync "${pairs[@]}") || { ui_err "не смог записать пользователей в конфиг sing-box"; return 1; }
+  if [ "$r" = changed ]; then pl_singbox_apply || return 1; fi
+  pl_sub_reload
+}
+
+# Ссылки и QR одного пользователя: подписка (с доменом) или прямые ссылки
+# установленных протоколов (без домена или по запросу).
+menu_user() {
+  local u="$1" owner choice url
+  owner=$(pl_owner)
+  while true; do
+    ui_screen "$u" "$([ "$u" = "$owner" ] && printf 'владелец подписки' || printf 'пользователь')"
+    if [ -n "$PL_DOMAIN" ]; then
+      url=$(pl_sub_url "$u")
+      printf '\n  %s\n' "$url"
+      ui_section ""
+      ui_key 1 "QR подписки — Karing, Hiddify"
+      ui_key 2 "QR импорта в приложение sing-box"
+      ui_key 3 "ссылки и QR протоколов"
+      ui_key 4 "сменить ссылку-подписку"
+    else
+      ui_section ""
+      ui_key 3 "ссылки и QR протоколов"
+    fi
+    [ "$u" != "$owner" ] && [ "$(pl_ui_mode)" = advanced ] && ui_key 9 "удалить пользователя"
+    ui_key b назад; printf '\n'
+
+    choice=$(ui_ask "выбор")
+    case "$choice" in
+      1|2) [ -n "$PL_DOMAIN" ] || continue
+           pl_sub_qr "$([ "$choice" = 2 ] && printf singbox || printf plain)" "$u"
+           ui_ask "enter" >/dev/null ;;
+      3) menu_links "$u" ;;
+      4) [ -n "$PL_DOMAIN" ] || continue
+         if ui_confirm "сменить ссылку $u? старая сразу перестанет работать"; then
+           pl_users rotate "$u" && pl_sub_reload
+         fi ;;
+      9) [ "$u" != "$owner" ] && [ "$(pl_ui_mode)" = advanced ] || continue
+         if ui_confirm "удалить $u? его ключи уберутся из всех протоколов, подключения оборвутся"; then
+           if pl_users del "$u" 2>/tmp/pl-users.err && pl_users_apply; then return; fi
+           ui_err "$(cat /tmp/pl-users.err 2>/dev/null)"; ui_ask "enter" >/dev/null
+         fi ;;
+      b|B|'') return ;;
+    esac
+  done
 }
 
 menu_users() {
-  local n i name tok mode
-  mode=$(pl_ui_mode)
+  local n i name mode choice names=()
   while true; do
-    ui_screen "пользователи" "подпиской владеет первый в списке"
+    mode=$(pl_ui_mode)
+    mapfile -t names < <(pl_users names)
+    ui_screen "пользователи" "у каждого свои ключи и своя ссылка"
     ui_section "список"
-    while read -r i name tok; do
-      ui_row "" "$name" "" "$tok"
-    done < <(pl_users_list)
-
+    i=1
+    for name in "${names[@]}"; do
+      ui_row "$i" "$name" "" "$([ "$i" = 1 ] && printf 'владелец')"
+      i=$((i+1))
+    done
     ui_section ""
-    if [ "$mode" = advanced ]; then
-      ui_key 1 "добавить"
-      ui_key 2 "удалить"
-    fi
-    ui_key b назад; printf '\n'
+    [ "$mode" = advanced ] && ui_key a "добавить"
+    ui_key b назад
+    [ "$mode" = advanced ] && ui_note "добавление и удаление перезапускают sing-box — соединения оборвутся на пару секунд"
+    printf '\n'
 
-    case "$(ui_ask "выбор")" in
-      1) [ "$mode" = advanced ] || { ui_err "нет такого пункта"; sleep 1; continue; }
-         n=$(ui_ask "имя"); [ -z "$n" ] && continue
-         if python3 - "$n" <<'PYADD'
-import json,secrets,sys
-p="/etc/packetlab/users.json"
-d=json.load(open(p))
-if any(u.get("name")==sys.argv[1] for u in d): sys.exit(1)
-d.append({"name":sys.argv[1],"sub_token":secrets.token_hex(16)})
-json.dump(d,open(p,"w"),indent=2,ensure_ascii=False)
-PYADD
-         # Успех виден в списке после перерисовки — пауза только на ошибке.
-         then pl_sub_reload; else ui_err "имя уже занято"; ui_ask "enter" >/dev/null; fi ;;
-      2) [ "$mode" = advanced ] || { ui_err "нет такого пункта"; sleep 1; continue; }
-         n=$(ui_ask "имя"); [ -z "$n" ] && continue
-         if ui_confirm "удалить $n? его токен подписки пропадёт безвозвратно"; then
-           if python3 - "$n" <<'PYDEL'
-import json,sys
-p="/etc/packetlab/users.json"
-d=json.load(open(p))
-if not d or d[0].get("name")==sys.argv[1]: sys.exit(1)
-rest=[u for u in d if u.get("name")!=sys.argv[1]]
-if len(rest)==len(d): sys.exit(1)
-json.dump(rest,open(p,"w"),indent=2,ensure_ascii=False)
-PYDEL
-           then pl_sub_reload
-           else ui_err "владельца подписки не удалить, остальных — только существующих"; ui_ask "enter" >/dev/null; fi
-         fi ;;
+    choice=$(ui_ask "выбор")
+    case "$choice" in
+      a|A) [ "$mode" = advanced ] || { ui_err "нет такого пункта"; sleep 1; continue; }
+           n=$(ui_ask "имя (латиница, цифры, _.-)"); [ -z "$n" ] && continue
+           # Успех виден в списке после перерисовки — пауза только на ошибке.
+           if ! pl_users add "$n" 2>/tmp/pl-users.err; then
+             ui_err "$(cat /tmp/pl-users.err)"; ui_ask "enter" >/dev/null; continue
+           fi
+           pl_users_apply || ui_ask "enter" >/dev/null ;;
       b|B|'') return ;;
+      *) if [ "$choice" -ge 1 ] 2>/dev/null && [ "$choice" -le "${#names[@]}" ]; then
+           menu_user "${names[$((choice-1))]}"
+         else
+           ui_err "нет такого пункта"; sleep 1
+         fi ;;
     esac
   done
 }
@@ -372,9 +409,10 @@ PYDEL
 # Без домена подписки не бывает — сервер подписок отдаёт TLS на доменном
 # имени. Тогда l показывает прямые ссылки установленных протоколов и QR
 # на каждую, если в системе есть qrencode.
-menu_sub_nodomain() {
-  local f name link st any=0
-  ui_screen "ссылки и QR" "домен не задан — прямые ссылки установленных протоколов"
+menu_links() {  # menu_links [пользователь] — без имени владельца
+  local u f name link st any=0
+  u=$(pl_link_user "${1:-}")
+  ui_screen "ссылки и QR · $u" "прямые ссылки установленных протоколов с ключами $u"
 
   for f in "${MODULES[@]}"; do
     st=$(mod_call "$f" mod_status)
@@ -390,7 +428,7 @@ menu_sub_nodomain() {
          [ "$(mod_meta "$f" MOD_NEEDS_DOMAIN)" != no ] && ui_note "ему нужен домен, а сервер без домена — его стоит удалить"
          continue ;;
     esac
-    link=$(mod_call "$f" mod_link uri)
+    link=$(mod_call "$f" mod_link uri "$u")
     [ -z "$link" ] && continue
     printf '\n  %s%s%s\n  %s\n' "$C_B" "$name" "$C_RST" "$link"
     ui_qr "$link"
@@ -405,9 +443,9 @@ menu_sub_nodomain() {
 # singbox — sing-box://import-remote-profile?url=…#имя (формат из
 # docs/clients/general.md sing-box): камера телефона открывает приложение
 # sing-box, и оно само заводит удалённый профиль с автообновлением.
-pl_sub_qr() {  # pl_sub_qr plain|singbox
+pl_sub_qr() {  # pl_sub_qr plain|singbox [пользователь]
   local url
-  url=$(pl_sub_url)
+  url=$(pl_sub_url "${2:-}")
   [ -n "$url" ] || { ui_err "токен не найден в $PL_USERS"; return 1; }
   if [ "${1:-plain}" = singbox ]; then
     ui_screen "QR для приложения sing-box" "наведи камеру телефона — откроется sing-box и добавит профиль"
@@ -422,13 +460,14 @@ pl_sub_qr() {  # pl_sub_qr plain|singbox
 
 menu_sub() {
   local url tok code choice
-  [ -z "$PL_DOMAIN" ] && { menu_sub_nodomain; return; }
+  [ -z "$PL_DOMAIN" ] && { menu_links; return; }
   while true; do
     url=$(pl_sub_url)
     ui_screen "ссылка-подписка" "формат выбирается по User-Agent клиента"
 
     if [ -n "$url" ]; then
       printf '\n  %s\n' "$url"
+      ui_note "ссылка владельца ($(pl_owner)); у остальных свои — «пользователи»"
       ui_note "Karing получит JSON со всеми протоколами, sing-box и прочие — без Mieru"
     else
       ui_err "токен не найден в $PL_USERS"
@@ -458,16 +497,9 @@ menu_sub() {
          fi
          rm -f /tmp/pl-sub.out
          ui_ask "enter" >/dev/null ;;
-      2) if ui_confirm "сменить токен? старая ссылка сразу перестанет работать"; then
-           if python3 - <<'PYTOK'
-import json,secrets
-p="/etc/packetlab/users.json"
-d=json.load(open(p)); d[0]["sub_token"]=secrets.token_hex(16)
-json.dump(d,open(p,"w"),indent=2,ensure_ascii=False)
-PYTOK
-           then ui_ok "новый токен"; pl_sub_reload; else ui_err "не смог переписать $PL_USERS"; fi
-         fi
-         ui_ask "enter" >/dev/null ;;
+      2) if ui_confirm "сменить ссылку владельца? старая сразу перестанет работать"; then
+           if pl_users rotate "$(pl_owner)"; then pl_sub_reload; else ui_err "не смог переписать $PL_USERS"; ui_ask "enter" >/dev/null; fi
+         fi ;;
       3) pl_sub_reload; sleep 1
          systemctl is-active --quiet packetlab-sub && ui_ok "поднят" || ui_err "не поднялся"
          ui_ask "enter" >/dev/null ;;
@@ -586,8 +618,11 @@ case "${1:-}" in
   '')        menu_main ;;
   status)    menu_health ;;
   sub)       pl_sub_url ;;
-  qr)        if [ -n "$PL_DOMAIN" ]; then pl_sub_qr "${2:-plain}"; else menu_sub_nodomain; fi ;;
-  link)      for f in "${MODULES[@]}"; do mod_call "$f" mod_link "${2:-uri}"; done ;;
+  qr)        if [ -n "$PL_DOMAIN" ]; then pl_sub_qr "${2:-plain}" "${3:-}"; else menu_links "${3:-}"; fi ;;
+  users-sync) pl_users_apply ;;   # после обновления packetlab: ключи всех пользователей → инбаунды
+  link)      for f in "${MODULES[@]}"; do   # packetlab link [формат] [пользователь]
+               [ "$(mod_call "$f" mod_status)" = off ] || mod_call "$f" mod_link "${2:-uri}" "${3:-}"
+             done ;;
   relay)     shift; plr "$@" ;;
   install)   f="$PL_ROOT/modules/${2:-}.sh"
              [ -n "${2:-}" ] && [ -f "$f" ] || { ui_err "packetlab install <модуль>, модули: $(cd "$PL_ROOT/modules" && ls *.sh | sed 's/\.sh$//' | tr '\n' ' ')"; exit 1; }

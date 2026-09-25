@@ -18,6 +18,7 @@ MOD_PROTO=udp
 MOD_NEEDS_SNI=yes          # требует поддомен в DNS
 MOD_SNI_LABEL=cdn          # cdn.<домен>
 MOD_LEVEL=advanced
+MOD_USERS='{"name":"%name%","uuid":"%uuid%","password":"%pass%"}'   # у каждого свои uuid и пароль
 
 # ---------------------------------------------------------------- status ---
 # Сверяет ТРИ источника, а не один. Расхождение между ними — и есть баг.
@@ -37,7 +38,7 @@ mod_status() {
     printf 'down'
   elif [ "$fw" = no ]; then
     printf 'blocked'
-  elif ! pl_meta_has tuic_uuid; then
+  elif ! pl_meta_has tuic_sni; then
     printf 'broken'
   else
     printf 'up'
@@ -48,11 +49,10 @@ mod_status() {
 mod_install() {
   pl_singbox_has_tag "${MOD_ID}-in" && { ui_err "инбаунд ${MOD_ID}-in уже есть — сначала удалить"; return 1; }
 
-  local uuid pass
-  uuid=$(pl_uuid)
-  pass=$(pl_secret)
+  local users
 
   pl_dns_ensure "$MOD_SNI_LABEL" || return 1
+  users=$(pl_inbound_users) || return 1
 
   pl_singbox_add_inbound "$(cat <<JSON
 {
@@ -61,7 +61,7 @@ mod_install() {
   "listen": "::",
   "listen_port": ${MOD_PORT},
   "congestion_control": "bbr",
-  "users": [{ "name": "${PL_USER}", "uuid": "${uuid}", "password": "${pass}" }],
+  "users": ${users},
   "tls": {
     "enabled": true,
     "server_name": "${MOD_SNI_LABEL}.${PL_DOMAIN}",
@@ -76,8 +76,6 @@ JSON
   # firewall — неотделимая часть установки, не отдельный шаг
   pl_ufw_sync_module || return 1
 
-  pl_meta_set "${MOD_ID}_uuid" "$uuid"
-  pl_meta_set "${MOD_ID}_pass" "$pass"
   pl_meta_set "${MOD_ID}_port" "$MOD_PORT"
   pl_meta_set "${MOD_ID}_sni"  "${MOD_SNI_LABEL}.${PL_DOMAIN}"
 
@@ -96,8 +94,10 @@ mod_remove() {
 
 # ------------------------------------------------------------------ link ---
 # Нода для подписки. Формат просит диспетчер: clash | singbox | uri
-mod_link() {
-  local fmt="$1" name="TUIC"
+mod_link() {  # mod_link <формат> [пользователь]
+  local fmt="$1" name="TUIC" u uuid pass
+  u=$(pl_link_user "${2:-}")
+  uuid=$(pl_cred "$u" "$MOD_ID" uuid) && pass=$(pl_cred "$u" "$MOD_ID" pass) || return 1
   case "$fmt" in
     clash)
       cat <<YAML
@@ -105,8 +105,8 @@ mod_link() {
   type: tuic
   server: ${PL_DOMAIN}
   port: $(pl_meta_get "${MOD_ID}_port")
-  uuid: $(pl_meta_get "${MOD_ID}_uuid")
-  password: $(pl_meta_get "${MOD_ID}_pass")
+  uuid: ${uuid}
+  password: ${pass}
   sni: $(pl_meta_get "${MOD_ID}_sni")
   alpn: [h3]
   congestion-controller: bbr
@@ -118,8 +118,8 @@ YAML
 {
   "type": "tuic", "tag": "${name}",
   "server": "${PL_DOMAIN}", "server_port": $(pl_meta_get "${MOD_ID}_port"),
-  "uuid": "$(pl_meta_get "${MOD_ID}_uuid")",
-  "password": "$(pl_meta_get "${MOD_ID}_pass")",
+  "uuid": "${uuid}",
+  "password": "${pass}",
   "congestion_control": "bbr",
   "tls": { "enabled": true, "server_name": "$(pl_meta_get "${MOD_ID}_sni")", "alpn": ["h3"] }
 }
@@ -127,7 +127,7 @@ JSON
       ;;
     uri)
       printf 'tuic://%s:%s@%s:%s?sni=%s&alpn=h3&congestion_control=bbr#%s\n' \
-        "$(pl_meta_get "${MOD_ID}_uuid")" "$(pl_urlenc "$(pl_meta_get "${MOD_ID}_pass")")" \
+        "${uuid}" "$(pl_urlenc "$pass")" \
         "$PL_DOMAIN" "$(pl_meta_get "${MOD_ID}_port")" \
         "$(pl_meta_get "${MOD_ID}_sni")" "$name"
       ;;

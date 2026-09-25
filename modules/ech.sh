@@ -8,13 +8,14 @@ MOD_PROTO=tcp
 MOD_VIA_HAPROXY=yes
 MOD_ECH_DIR=/etc/packetlab/ech
 MOD_LEVEL=advanced
+MOD_USERS='{"name":"%name%","password":"%pass%"}'
 
 mod_status() {
   pl_singbox_has_tag "${MOD_ID}-in" || { printf off; return; }
   pl_port_listening "$MOD_PORT" tcp || { printf down; return; }
   pl_ufw_allows 443 tcp || { printf blocked; return; }
   pl_haproxy_has_backend "$MOD_ID" || { printf broken; return; }
-  pl_meta_has ech_pass || { printf broken; return; }
+  pl_meta_has ech_sni || { printf broken; return; }
   printf up
 }
 
@@ -54,9 +55,8 @@ print(json.dumps({'type':'HTTPS','name':sys.argv[1],'ttl':300,
 
 mod_install() {
   pl_singbox_has_tag "${MOD_ID}-in" && { ui_err "инбаунд ${MOD_ID}-in уже есть — сначала удалить"; return 1; }
-  local pass target cert key
+  local users target cert key
   target=$(pl_meta_get ech_domain); [ -z "$target" ] && target=edgevanga.xyz
-  pass=$(pl_secret)
   cert="/etc/letsencrypt/live/${target}/fullchain.pem"
   key="/etc/letsencrypt/live/${target}/privkey.pem"
 
@@ -82,10 +82,11 @@ mod_install() {
   fi
 
   _ech_publish "$target" "$(cat "$MOD_ECH_DIR/ech-b64.txt")" || return 1
+  users=$(pl_inbound_users) || return 1
 
   pl_singbox_add_inbound "$(cat <<JSON
 { "type":"anytls","tag":"${MOD_ID}-in","listen":"127.0.0.1","listen_port":${MOD_PORT},
-  "users":[{"name":"${PL_USER}","password":"${pass}"}],
+  "users":${users},
   "tls":{"enabled":true,"server_name":"${target}",
     "certificate_path":"${cert}","key_path":"${key}",
     "ech":{"enabled":true,"key_path":"${MOD_ECH_DIR}/ech-keys.pem"}} }
@@ -94,7 +95,6 @@ JSON
 
   pl_haproxy_add_sni "$target" "$MOD_ID" "$MOD_PORT" || return 1
   pl_ufw_sync_module
-  pl_meta_set "${MOD_ID}_pass" "$pass"
   pl_meta_set "${MOD_ID}_sni"  "$target"
   pl_singbox_apply && pl_sub_reload
 }
@@ -106,12 +106,13 @@ mod_remove() {
   pl_singbox_apply && pl_sub_reload
 }
 
-mod_link() {
-  local name="AnyTLS-ECH"
+mod_link() {  # mod_link <формат> [пользователь]
+  local name="AnyTLS-ECH" u pass
+  u=$(pl_link_user "${2:-}"); pass=$(pl_cred "$u" "$MOD_ID" pass) || return 1
   case "$1" in
     singbox) cat <<JSON
 { "type":"anytls","tag":"${name}","server":"$(pl_meta_get ${MOD_ID}_sni)","server_port":443,
-  "password":"$(pl_meta_get ${MOD_ID}_pass)",
+  "password":"${pass}",
   "tls":{"enabled":true,"server_name":"$(pl_meta_get ${MOD_ID}_sni)","ech":{"enabled":true}} }
 JSON
     ;;

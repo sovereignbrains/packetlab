@@ -5,7 +5,7 @@
 PL_ETC=${PL_ETC:-/etc/packetlab}
 PL_META="$PL_ETC/meta.json"
 PL_USERS="$PL_ETC/users.json"
-PL_SB=/etc/sing-box/config.json
+PL_SB=${PL_SB:-/etc/sing-box/config.json}
 PL_HAP=/etc/haproxy/haproxy.cfg
 
 PL_DOMAIN=$(python3 -c "import json;print(json.load(open('$PL_META'))['domain'])" 2>/dev/null || echo '')
@@ -238,9 +238,21 @@ pl_dns_ensure() {
 # и Mieru. Модуль должен быть source'нут в этой (под)оболочке.
 pl_module_needs_domain() { [ "${MOD_NEEDS_DOMAIN:-yes}" != no ]; }
 
+# ---------------------------------------------------------- пользователи --
+# У каждого пользователя в каждом протоколе свои ключи — логика в lib/users.py
+# (его же зовёт сервер подписок). Модуль объявляет MOD_USERS — шаблон записи
+# пользователя в своём инбаунде с %name%, %uuid%, %pass%; mod_install кладёт
+# туда всех (pl_inbound_users), mod_link <формат> [имя] строит ссылку с ключами
+# этого пользователя (pl_cred), без имени — владельца.
+pl_users() { PL_ETC="$PL_ETC" PL_SB="$PL_SB" python3 "${PL_ROOT:-/opt/packetlab}/lib/users.py" "$@"; }
+pl_owner() { pl_users owner; }
+pl_cred()  { pl_users cred "$@"; }                    # pl_cred <имя> <модуль> uuid|pass
+pl_link_user() { if [ -n "${1:-}" ]; then printf '%s' "$1"; else pl_owner; fi; }
+pl_inbound_users() { pl_users inbound-users "$MOD_ID" "$MOD_USERS"; }   # модуль source'нут
+
 # --------------------------------------------------------------- подписка -
 pl_sub_reload()  { systemctl restart packetlab-sub 2>/dev/null || true; }
-pl_sub_url() {
-  local t; t=$(python3 -c "import json;print(json.load(open('$PL_USERS'))[0]['sub_token'])" 2>/dev/null)
+pl_sub_url() {  # pl_sub_url [имя] — без имени владельца
+  local t; t=$(pl_users token "$(pl_link_user "${1:-}")" 2>/dev/null)
   [ -n "$t" ] && printf 'https://%s/sub/%s\n' "$PL_DOMAIN" "$t"
 }

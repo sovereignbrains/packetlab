@@ -13,6 +13,7 @@
 
 import base64
 import json
+import shlex
 import subprocess
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -48,8 +49,9 @@ def installed(mod: Path) -> bool:
     return _run_module(mod, "mod_status") != "off"
 
 
-def ask_module(mod: Path, fmt: str) -> str:
-    return _run_module(mod, f"mod_link {fmt}")
+def ask_module(mod: Path, fmt: str, user: str) -> str:
+    """Нода с ключами этого пользователя: у каждого они свои (lib/users.py)."""
+    return _run_module(mod, f"mod_link {fmt} {shlex.quote(user)}")
 
 
 def mod_var(mod: Path, name: str) -> str:
@@ -78,14 +80,14 @@ def detect(ua: str) -> str:
     return "singbox_strict"
 
 
-def build(fmt: str) -> tuple[bytes, str]:
+def build(fmt: str, user: str) -> tuple[bytes, str]:
     strict = fmt == "singbox_strict"
     if strict:
         fmt = "singbox"
     mods = [m for m in modules() if installed(m)]
     if strict:
         mods = [m for m in mods if not needs_extended_client(m)]
-    parts = [ask_module(m, fmt) for m in mods]
+    parts = [ask_module(m, fmt, user) for m in mods]
     parts = [p for p in parts if p]
 
     if fmt == "singbox":
@@ -154,7 +156,7 @@ class Handler(BaseHTTPRequestHandler):
         # Без этого исключение при сборке обрывает соединение без ответа:
         # клиент видит «empty reply», а причина остаётся только в журнале.
         try:
-            body, ctype = build(fmt)
+            body, ctype = build(fmt, user["name"])
         except Exception:
             traceback.print_exc()
             self.send_response(500)

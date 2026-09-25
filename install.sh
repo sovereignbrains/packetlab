@@ -546,12 +546,13 @@ get lib/ui.sh              "$PL_ROOT/lib/ui.sh"
 get lib/core.sh            "$PL_ROOT/lib/core.sh"
 get lib/state.sh           "$PL_ROOT/lib/state.sh"
 get lib/relay.sh           "$PL_ROOT/lib/relay.sh"
+get lib/users.py           "$PL_ROOT/lib/users.py"
 get relay/plr.sh           "$PL_ROOT/relay/plr.sh"
 get sub/packetlab-sub.py   "$PL_ROOT/sub/packetlab-sub.py"
 for m in reality tuic anytls anytls-reality naive hy2 mieru ech; do
   get "modules/$m.sh" "$PL_ROOT/modules/$m.sh"
 done
-chmod +x "$PL_ROOT/packetlab" "$PL_ROOT/relay/plr.sh" "$PL_ROOT/sub/packetlab-sub.py"
+chmod +x "$PL_ROOT/packetlab" "$PL_ROOT/relay/plr.sh" "$PL_ROOT/sub/packetlab-sub.py" "$PL_ROOT/lib/users.py"
 ln -sf "$PL_ROOT/relay/plr.sh" /usr/local/bin/plr
 ln -sf "$PL_ROOT/packetlab" /usr/local/bin/packetlab
 ok "файлы разложены"
@@ -627,6 +628,16 @@ if [ "${#restored[@]}" -gt 0 ]; then
   ok "firewall восстановлен для: ${restored[*]}"
 else
   ok "установленных протоколов нет — восстанавливать нечего"
+fi
+
+# Ключи у каждого пользователя свои (lib/users.py). На сервере, обновлённом
+# со старой версии, дописываем всех пользователей в уже установленные
+# инбаунды; владелец сохраняет прежние ключи, так что ссылки не меняются.
+# Конфиг не изменился — sing-box не перезапускается.
+if [ "${#restored[@]}" -gt 0 ]; then
+  "$PL_ROOT/packetlab" users-sync >/dev/null 2>&1 \
+    && ok "пользователи сверены с протоколами" \
+    || warn "не смог сверить пользователей: packetlab users-sync"
 fi
 
 cat > /etc/systemd/system/packetlab-sub.service <<UNIT

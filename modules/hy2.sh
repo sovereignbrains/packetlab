@@ -6,12 +6,13 @@ MOD_ENGINE=sing-box
 MOD_PORT=9445
 MOD_PROTO=udp
 MOD_LEVEL=advanced
+MOD_USERS='{"name":"%name%","password":"%pass%"}'
 
 mod_status() {
   pl_singbox_has_tag "${MOD_ID}-in" || { printf off; return; }
   pl_port_listening "$MOD_PORT" udp || { printf down; return; }
   pl_ufw_allows "$MOD_PORT" udp || { printf blocked; return; }
-  pl_meta_has hy2_pass || { printf broken; return; }
+  pl_meta_has hy2_port || { printf broken; return; }
   printf up
 }
 
@@ -19,16 +20,15 @@ mod_status() {
 # игнорирует сигналы перегрузки. По умолчанию работает BBR.
 mod_install() {
   pl_singbox_has_tag "${MOD_ID}-in" && { ui_err "инбаунд ${MOD_ID}-in уже есть — сначала удалить"; return 1; }
-  local pass; pass=$(pl_secret)
+  local users; users=$(pl_inbound_users) || return 1
   pl_singbox_add_inbound "$(cat <<JSON
 { "type":"hysteria2","tag":"${MOD_ID}-in","listen":"::","listen_port":${MOD_PORT},
-  "users":[{"name":"${PL_USER}","password":"${pass}"}],
+  "users":${users},
   "tls":{"enabled":true,"server_name":"${PL_DOMAIN}","alpn":["h3"],
     "certificate_path":"${PL_CERT}","key_path":"${PL_KEY}"} }
 JSON
 )" || return 1
   pl_ufw_sync_module
-  pl_meta_set "${MOD_ID}_pass" "$pass"
   pl_meta_set "${MOD_ID}_port" "$MOD_PORT"
   pl_singbox_apply && pl_sub_reload
 }
@@ -41,9 +41,11 @@ mod_remove() {
 }
 
 # Пароль на проводе — только password. Имя пользователя в ссылку НЕ входит:
-# sing-box сравнивает ровно пароль, а "user:pass" даст ошибку аутентификации.
-mod_link() {
-  local name="Hysteria2" p; p=$(pl_meta_get ${MOD_ID}_pass)
+# sing-box сравнивает ровно пароль (у каждого пользователя он свой), а
+# "user:pass" даст ошибку аутентификации.
+mod_link() {  # mod_link <формат> [пользователь]
+  local name="Hysteria2" u p
+  u=$(pl_link_user "${2:-}"); p=$(pl_cred "$u" "$MOD_ID" pass) || return 1
   case "$1" in
     clash) cat <<YAML
 - name: ${name}
