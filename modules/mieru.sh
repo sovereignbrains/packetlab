@@ -70,8 +70,13 @@ YAML
   "multiplexing":"MULTIPLEXING_HIGH" }
 JSON
     ;;
-    uri) printf 'mierus://%s@%s:%s#%s\n' \
-      "$(printf '%s:%s' "$PL_USER" "$(pl_meta_get ${MOD_ID}_pass)" | base64 -w0)" \
-      "$PL_HOST" "$(pl_meta_get ${MOD_ID}_port)" "$name" ;;
+    # Простая ссылка Mieru (docs/client-install.md, разбор — URLToClientProfile):
+    # имя и пароль открытым текстом в userinfo, порт — не через «:», а парой
+    # параметров port/protocol, profile обязателен. Раньше тут был формат
+    # «как у ss://» (base64 и host:port) — клиенты отвечали «invalid port».
+    # #имя парсер Mieru игнорирует, а клиенты берут из него название.
+    uri) printf 'mierus://%s:%s@%s?multiplexing=MULTIPLEXING_HIGH&port=%s&profile=%s&protocol=TCP#%s\n' \
+      "$(pl_urlenc "$PL_USER")" "$(pl_urlenc "$(pl_meta_get ${MOD_ID}_pass)")" \
+      "$PL_HOST" "$(pl_meta_get ${MOD_ID}_port)" "$name" "$name" ;;
   esac
 }
