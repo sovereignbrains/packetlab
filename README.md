@@ -34,6 +34,7 @@ PL_NO_DOMAIN=1 bash <(curl -fsSL https://raw.githubusercontent.com/sovereignbrai
 packetlab            # меню
 packetlab status     # диагностика: конфиг / порт / firewall
 packetlab sub        # ссылка-подписка
+packetlab qr         # QR подписки (Karing, Hiddify); packetlab qr singbox — импорт в приложение sing-box
 packetlab link uri   # все ноды списком
 packetlab install anytls-reality   # поставить модуль без меню
 ```

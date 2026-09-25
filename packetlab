@@ -221,7 +221,7 @@ pl_postflight() {
 
 # ------------------------------------------------------- меню протокола ---
 menu_module() {
-  local f="$1" name state
+  local f="$1" name state link
   name=$(mod_meta "$f" MOD_NAME)
 
   while true; do
@@ -239,7 +239,7 @@ menu_module() {
     case "$state" in
       off) ui_key 1 "установить" ;;
       *)
-        ui_key 1 "показать ссылку"
+        ui_key 1 "ссылка и QR"
         ui_key 2 "переустановить"
         ui_key 3 "удалить"
         [ "$state" = blocked ] && ui_key 4 "починить firewall"
@@ -255,7 +255,11 @@ menu_module() {
              ui_note "установка отменена, конфиг не тронут"
            fi
          else
-           printf '\n'; mod_call "$f" mod_link uri; printf '\n'
+           # Экран с чистого листа: QR высокий, под меню он уехал бы за край.
+           link=$(mod_call "$f" mod_link uri)
+           ui_screen "$name" "ссылка и QR"
+           printf '\n  %s\n\n' "$link"
+           [ -n "$link" ] && ui_qr "$link"
          fi
          ui_ask "enter" >/dev/null ;;
       2) ui_confirm "переустановить $name? текущие ключи будут заменены" \
@@ -370,9 +374,8 @@ PYDEL
 # имени. Тогда l показывает прямые ссылки установленных протоколов и QR
 # на каждую, если в системе есть qrencode.
 menu_sub_nodomain() {
-  local f name link have_qr=0 any=0
-  command -v qrencode >/dev/null 2>&1 && have_qr=1
-  ui_head "ссылки" "домен не задан — прямые ссылки установленных протоколов"
+  local f name link any=0
+  ui_screen "ссылки и QR" "домен не задан — прямые ссылки установленных протоколов"
 
   for f in "${MODULES[@]}"; do
     [ "$(mod_call "$f" mod_status)" = off ] && continue
@@ -381,20 +384,35 @@ menu_sub_nodomain() {
     any=1
     name=$(mod_meta "$f" MOD_NAME)
     printf '\n  %s%s%s\n  %s\n' "$C_B" "$name" "$C_RST" "$link"
-    [ "$have_qr" = 1 ] && qrencode -t UTF8 <<<"$link"
+    ui_qr "$link"
   done
 
-  if [ "$any" = 0 ]; then
-    ui_note "ни один протокол не установлен"
-  elif [ "$have_qr" = 0 ]; then
-    ui_note "qrencode не установлен, ссылка текстом"
-  fi
+  [ "$any" = 0 ] && ui_note "ни один протокол не установлен"
   printf '\n'
   ui_ask "enter" >/dev/null
 }
 
+# QR подписки. plain — сама ссылка: Karing и Hiddify сканируют её как есть.
+# singbox — sing-box://import-remote-profile?url=…#имя (формат из
+# docs/clients/general.md sing-box): камера телефона открывает приложение
+# sing-box, и оно само заводит удалённый профиль с автообновлением.
+pl_sub_qr() {  # pl_sub_qr plain|singbox
+  local url
+  url=$(pl_sub_url)
+  [ -n "$url" ] || { ui_err "токен не найден в $PL_USERS"; return 1; }
+  if [ "${1:-plain}" = singbox ]; then
+    ui_screen "QR для приложения sing-box" "наведи камеру телефона — откроется sing-box и добавит профиль"
+    printf '\n'
+    ui_qr "sing-box://import-remote-profile?url=$(pl_urlenc "$url")#$(pl_urlenc packetlab)"
+  else
+    ui_screen "QR ссылки-подписки" "Karing, Hiddify: добавить подписку → сканировать QR"
+    printf '\n  %s\n\n' "$url"
+    ui_qr "$url"
+  fi
+}
+
 menu_sub() {
-  local url tok code
+  local url tok code choice
   [ -z "$PL_DOMAIN" ] && { menu_sub_nodomain; return; }
   while true; do
     url=$(pl_sub_url)
@@ -411,9 +429,12 @@ menu_sub() {
     ui_key 1 "проверить отдачу"
     ui_key 2 "сменить токен"
     ui_key 3 "перезапустить сервер"
+    ui_key 4 "QR ссылки — Karing, Hiddify"
+    ui_key 5 "QR импорта в приложение sing-box"
     ui_key b назад; printf '\n'
 
-    case "$(ui_ask "выбор")" in
+    choice=$(ui_ask "выбор")
+    case "$choice" in
       1) # Спрашиваем напрямую у сервера подписок: так проверяется он сам,
          # без участия DNS, haproxy и Caddy.
          tok=${url##*/}
@@ -440,6 +461,9 @@ PYTOK
          ui_ask "enter" >/dev/null ;;
       3) pl_sub_reload; sleep 1
          systemctl is-active --quiet packetlab-sub && ui_ok "поднят" || ui_err "не поднялся"
+         ui_ask "enter" >/dev/null ;;
+      4|5) [ -n "$url" ] || continue
+         pl_sub_qr "$([ "$choice" = 5 ] && printf singbox || printf plain)"
          ui_ask "enter" >/dev/null ;;
       b|B|'') return ;;
     esac
@@ -553,6 +577,7 @@ case "${1:-}" in
   '')        menu_main ;;
   status)    menu_health ;;
   sub)       pl_sub_url ;;
+  qr)        if [ -n "$PL_DOMAIN" ]; then pl_sub_qr "${2:-plain}"; else menu_sub_nodomain; fi ;;
   link)      for f in "${MODULES[@]}"; do mod_call "$f" mod_link "${2:-uri}"; done ;;
   relay)     shift; plr "$@" ;;
   install)   f="$PL_ROOT/modules/${2:-}.sh"
