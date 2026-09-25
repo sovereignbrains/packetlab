@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # packetlab — установка с нуля.
 #
-#   curl -fsSL https://raw.githubusercontent.com/sovereignbrains/packetlab/main/install.sh | bash
+#   wget -qO- https://raw.githubusercontent.com/sovereignbrains/packetlab/main/install.sh | bash
 #
 # Что делает: ставит sing-box (сборка mbox — апстрим + протокол Mieru, другие
 # ядра не нужны), haproxy как SNI-мультиплексор, тюнит ядро, поднимает сервер
@@ -504,7 +504,7 @@ else
   # который конфликтует с decoy-сайтом и роняет сервис на старте. Свои
   # инбаунды packetlab всегда тегирует, поэтому нетегированные — чужие.
   # `sing-box check` такое не ловит: синтаксис валиден, падает уже listener.
-  if python3 - <<'PYSB'
+  if dropped=$(python3 - <<'PYSB'
 import json, shutil, time, sys
 p = '/etc/sing-box/config.json'
 d = json.load(open(p))
@@ -517,8 +517,8 @@ d['inbounds'] = keep
 json.dump(d, open(p, 'w'), indent=2, ensure_ascii=False)
 print(', '.join('%s:%s' % (i.get('type'), i.get('listen_port')) for i in drop))
 PYSB
-  then
-    ok "убраны чужие инбаунды из конфига (копия рядом, .bak-*)"
+  ); then
+    ok "убраны чужие инбаунды: $dropped (копия рядом, .bak-*)"
   else
     ok "конфиг на месте"
   fi
