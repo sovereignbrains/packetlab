@@ -80,6 +80,13 @@ def detect(ua: str) -> str:
     return "singbox_strict"
 
 
+# С адреса хостера Qwen/Alibaba сыплют капчами, а напрямую из РФ открываются.
+DIRECT_SUFFIXES = [
+    "qwen.ai", "qwenlm.ai", "qwen.com", "alicdn.com", "aliyun.com",
+    "aliyuncs.com", "alibabacloud.com", "alibaba.com", "mmstat.com",
+]
+
+
 def build(fmt: str, user: str) -> tuple[bytes, str]:
     strict = fmt == "singbox_strict"
     if strict:
@@ -105,7 +112,8 @@ def build(fmt: str, user: str) -> tuple[bytes, str]:
                 {"type": "tls", "tag": "remote", "server": "1.1.1.1", "detour": "proxy"},
                 {"type": "local", "tag": "local"},
             ],
-            "rules": ([{"domain": own_hosts, "server": "local"}] if own_hosts else []),
+            "rules": ([{"domain": own_hosts, "server": "local"}] if own_hosts else [])
+                     + [{"domain_suffix": DIRECT_SUFFIXES, "server": "local"}],
             "final": "remote",
             "strategy": "ipv4_only",
         }
@@ -130,8 +138,19 @@ def build(fmt: str, user: str) -> tuple[bytes, str]:
                 + outs
                 + [{"type": "direct", "tag": "direct"}]
             ),
-            "route": {"final": "proxy", "auto_detect_interface": True,
-                      "default_domain_resolver": {"server": "local"}},
+            "route": {
+                "rules": [
+                    {"action": "sniff"},
+                    # DNS к роутеру иначе уходит в туннель и висит до таймаута.
+                    {"protocol": "dns", "action": "hijack-dns"},
+                    {"ip_is_private": True, "outbound": "direct"},
+                    {"domain_suffix": DIRECT_SUFFIXES, "outbound": "direct"},
+                    # QUIC поверх TCP-туннеля тормозит; браузер сам уйдёт на TCP.
+                    {"protocol": "quic", "action": "reject"},
+                ],
+                "final": "proxy", "auto_detect_interface": True,
+                "default_domain_resolver": {"server": "local"},
+            },
         }
         return json.dumps(cfg, indent=2, ensure_ascii=False).encode(), "application/json"
 
