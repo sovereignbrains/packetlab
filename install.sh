@@ -559,10 +559,11 @@ get lib/relay.sh           "$PL_ROOT/lib/relay.sh"
 get lib/users.py           "$PL_ROOT/lib/users.py"
 get relay/plr.sh           "$PL_ROOT/relay/plr.sh"
 get sub/packetlab-sub.py   "$PL_ROOT/sub/packetlab-sub.py"
+get sub/update-rules.sh    "$PL_ROOT/sub/update-rules.sh"
 for m in reality tuic anytls anytls-reality naive hy2 mieru ech; do
   get "modules/$m.sh" "$PL_ROOT/modules/$m.sh"
 done
-chmod +x "$PL_ROOT/packetlab" "$PL_ROOT/relay/plr.sh" "$PL_ROOT/sub/packetlab-sub.py" "$PL_ROOT/lib/users.py"
+chmod +x "$PL_ROOT/packetlab" "$PL_ROOT/relay/plr.sh" "$PL_ROOT/sub/packetlab-sub.py" "$PL_ROOT/lib/users.py" "$PL_ROOT/sub/update-rules.sh"
 ln -sf "$PL_ROOT/relay/plr.sh" /usr/local/bin/plr
 ln -sf "$PL_ROOT/packetlab" /usr/local/bin/packetlab
 ok "файлы разложены"
@@ -669,6 +670,37 @@ systemctl enable --now packetlab-sub >/dev/null 2>&1
 sleep 1
 systemctl is-active --quiet packetlab-sub && ok "сервер подписок на :9999" \
   || warn "packetlab-sub не поднялся: journalctl -u packetlab-sub"
+
+# Фильтр рекламы для подписки: раз в сутки сервер сам собирает adguard.srs.
+cat > /etc/systemd/system/packetlab-rules.service <<UNIT
+[Unit]
+Description=packetlab rule-sets for clients (adblock)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=$PL_ROOT/sub/update-rules.sh
+UNIT
+cat > /etc/systemd/system/packetlab-rules.timer <<UNIT
+[Unit]
+Description=packetlab rule-sets daily refresh
+
+[Timer]
+OnCalendar=daily
+RandomizedDelaySec=1h
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+UNIT
+systemctl daemon-reload
+systemctl enable --now packetlab-rules.timer >/dev/null 2>&1
+if systemctl start packetlab-rules.service; then
+  ok "фильтр рекламы собран, обновляется раз в сутки"
+else
+  warn "фильтр рекламы не собрался — подписка уйдёт без него: journalctl -u packetlab-rules"
+fi
 
 # ----------------------------------------------------------------- итог ---
 # Ядро могло обновиться при PL_UPGRADE=1 — перезагружать сервер сами не будем.

@@ -13,6 +13,7 @@
 
 import base64
 import json
+import re
 import shlex
 import subprocess
 import traceback
@@ -22,6 +23,10 @@ from pathlib import Path
 ETC = Path("/etc/packetlab")
 ROOT = Path("/opt/packetlab")
 PORT = 9999
+# Наборы правил (.srs), которые сервер собирает сам: adguard.srs — фильтр рекламы,
+# его раз в сутки обновляет packetlab-rules.timer (sub/update-rules.sh).
+RULES = Path("/var/lib/packetlab/rules")
+RULE_NAME = re.compile(r"^[a-z0-9-]+\.srs$")
 
 
 def users():
@@ -87,7 +92,48 @@ DIRECT_SUFFIXES = [
 ]
 
 
-def build(fmt: str, user: str) -> tuple[bytes, str]:
+def domain() -> str:
+    try:
+        return json.loads((ETC / "meta.json").read_text()).get("domain", "")
+    except (OSError, ValueError):
+        return ""
+
+
+def sing_box_version(ua: str) -> tuple:
+    """(мажор, минор) ядра из User-Agent, (0, 0) — не удалось понять."""
+    m = re.search(r"sing-box[ /]v?(\d+)\.(\d+)", ua or "", re.I)
+    return (int(m.group(1)), int(m.group(2))) if m else (0, 0)
+
+
+def add_adblock(cfg: dict, base: str, core: tuple = (0, 0)) -> None:
+    """Реклама режется в клиенте: DNS-запрос к рекламному домену получает отказ,
+    а соединение по SNI (sniff) — reject; второе ловит и браузеры со своим DoH.
+    Правило встаёт после «напрямую», чтобы не ломать Qwen (mmstat.com в фильтре)."""
+    if not base or not (RULES / "adguard.srs").exists():
+        return
+    rs = {"type": "remote", "tag": "ads", "format": "binary",
+          "url": f"{base}/rules/adguard.srs", "update_interval": "24h"}
+    # Качаем напрямую, а не через proxy: иначе без живого туннеля набор не
+    # скачается, и клиент не стартует вовсе. Сама подписка скачивается так же.
+    # С 1.14 это http_client без detour (download_detour там устарел и уйдёт
+    # в 1.16); ядра старше и форки неизвестной версии (Karing) http_client
+    # не знают и упали бы на незнакомом поле — им прежний download_detour.
+    if core >= (1, 14):
+        # Пустой {} ядро считает неявным клиентом по умолчанию — это тоже
+        # устарело; клиент нужен объявленный и названный. Без detour — напрямую.
+        cfg["http_clients"] = [{"tag": "dl-direct"}]
+        cfg["route"]["default_http_client"] = "dl-direct"
+        rs["http_client"] = "dl-direct"
+    else:
+        rs["download_detour"] = "direct"
+    cfg["route"]["rule_set"] = [rs]
+    rules = cfg["route"]["rules"]
+    at = next(i for i, r in enumerate(rules) if r.get("protocol") == "quic")
+    rules.insert(at, {"rule_set": "ads", "action": "reject"})
+    cfg["dns"]["rules"].append({"rule_set": "ads", "action": "reject"})
+
+
+def build(fmt: str, user: str, base: str = "", core: tuple = (0, 0)) -> tuple[bytes, str]:
     strict = fmt == "singbox_strict"
     if strict:
         fmt = "singbox"
@@ -152,6 +198,7 @@ def build(fmt: str, user: str) -> tuple[bytes, str]:
                 "default_domain_resolver": {"server": "local"},
             },
         }
+        add_adblock(cfg, base, core)
         return json.dumps(cfg, indent=2, ensure_ascii=False).encode(), "application/json"
 
 
@@ -160,22 +207,50 @@ class Handler(BaseHTTPRequestHandler):
     sys_version = ""
 
     def _resolve(self):
+        """/sub/<токен> — подписка, /sub/<токен>/rules/<имя>.srs — набор правил.
+        Правила отдаются только по живому токену, как и сама подписка."""
         parts = self.path.split("?")[0].strip("/").split("/")
-        if len(parts) != 2 or parts[0] != "sub" or not parts[1]:
-            return None
-        return next((u for u in users() if u.get("sub_token") == parts[1]), None)
+        if len(parts) not in (2, 4) or parts[0] != "sub" or not parts[1]:
+            return None, None
+        if len(parts) == 4 and (parts[2] != "rules" or not RULE_NAME.match(parts[3])):
+            return None, None
+        user = next((u for u in users() if u.get("sub_token") == parts[1]), None)
+        return user, (parts[3] if len(parts) == 4 else None)
+
+    def _send_file(self, path: Path, head_only: bool):
+        try:
+            body = path.read_bytes()
+        except OSError:
+            self.send_response(404)
+            self.end_headers()
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        if not head_only:
+            self.wfile.write(body)
 
     def _serve(self, head_only=False):
-        user = self._resolve()
+        user, rule = self._resolve()
         if not user:
             self.send_response(404)
             self.end_headers()
             return
-        fmt = self.headers.get("X-Format") or detect(self.headers.get("User-Agent"))
+        if rule:
+            self._send_file(RULES / rule, head_only)
+            return
+        ua = self.headers.get("User-Agent") or ""
+        # В журнал: по UA выбирается формат, и разбирать «почему этому клиенту
+        # приехало не то» без него нечем. Токен не пишем.
+        print(f"sub {user['name']} ua={ua[:120]!r}", flush=True)
+        fmt = self.headers.get("X-Format") or detect(ua)
+        dom = domain()
+        base = f"https://{dom}/sub/{user['sub_token']}" if dom else ""
         # Без этого исключение при сборке обрывает соединение без ответа:
         # клиент видит «empty reply», а причина остаётся только в журнале.
         try:
-            body, ctype = build(fmt, user["name"])
+            body, ctype = build(fmt, user["name"], base, sing_box_version(ua))
         except Exception:
             traceback.print_exc()
             self.send_response(500)
