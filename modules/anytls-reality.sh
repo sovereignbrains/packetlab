@@ -24,7 +24,7 @@ mod_install() {
   local target kp priv pub sid users
   # haproxy делит 443 по SNI, поэтому цель маскировки не может совпадать с чужой: REALITY-модуль
   # по умолчанию уже изображает www.bing.com.
-  target=$(pl_meta_get "${MOD_ID}_target"); [ -z "$target" ] && target=www.microsoft.com
+  target=$(pl_meta_get "${MOD_ID}_target"); [ -z "$target" ] && target=www.ebay.com
   if grep -q "req.ssl_sni -i ${target} " "$PL_HAP" 2>/dev/null; then
     ui_err "SNI $target в haproxy уже занят другим протоколом"
     ui_note "задай другой сайт ключом ${MOD_ID}_target в $PL_META"
