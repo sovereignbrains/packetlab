@@ -16,6 +16,8 @@ meta.json (<модуль>_uuid / <модуль>_pass), с которыми пр�
   cred <имя> <модуль> uuid|pass          — ключ (создаётся, если нет)
   inbound-users <модуль> <шаблон>        — JSON-массив users для инбаунда
   add <имя> | del <имя> | rotate <имя>
+  rekey <имя> [<модуль> …]               — выбросить ключи (все или модулей),
+                                           следующий sync выпустит новые
   sync <модуль>=<шаблон> …               — переписать users в инбаундах;
                                            печатает changed или same
 В шаблоне: %name%, %uuid%, %pass% — например {"name":"%name%","password":"%pass%"}.
@@ -61,7 +63,7 @@ def _save(p: Path, data) -> None:
 def _new(field: str) -> str:
     if field == "uuid":
         return str(uuid.uuid4())
-    return base64.b64encode(secrets.token_bytes(18)).decode()   # как pl_secret
+    return base64.urlsafe_b64encode(secrets.token_bytes(18)).decode()   # как pl_secret
 
 
 def users() -> list:
@@ -152,6 +154,21 @@ def main(argv):
         _save(USERS, rest)
     elif cmd == "rotate":
         find(us, args[0])["sub_token"] = secrets.token_hex(16)
+        _save(USERS, us)
+    elif cmd == "rekey":
+        u = find(us, args[0])
+        creds = u.setdefault("creds", {})
+        mods = args[1:] or list(creds)
+        for mod in mods:
+            creds.pop(mod, None)
+        # Владелец при пустых ключах забирает старые из meta.json — их тоже
+        # убираем, иначе ensure вернул бы прежний пароль.
+        if u is us[0]:
+            meta = _load(META, {})
+            for mod in mods:
+                for f in FIELDS:
+                    meta.pop(f"{mod}_{f}", None)
+            _save(META, meta)
         _save(USERS, us)
     elif cmd == "sync":
         return sync(us, args)

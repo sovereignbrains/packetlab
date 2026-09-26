@@ -18,7 +18,9 @@ PL_KEY="/etc/letsencrypt/live/$PL_DOMAIN/privkey.pem"
 
 # ------------------------------------------------------------- секреты ----
 pl_uuid()   { cat /proc/sys/kernel/random/uuid; }
-pl_secret() { openssl rand -base64 18 | tr -d '\n'; }
+# Алфавит URL-safe: «+» из обычного base64 в ссылке становится %2B, а Karing его
+# обратно не раскодирует — пароль приходит на сервер испорченным.
+pl_secret() { openssl rand -base64 18 | tr '+/' '-_' | tr -d '\n'; }
 pl_hex()    { openssl rand -hex "${1:-8}" | tr -d '\n'; }
 pl_urlenc() { python3 -c 'import sys,urllib.parse;print(urllib.parse.quote(sys.argv[1],safe=""))' "$1"; }
 

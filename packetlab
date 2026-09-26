@@ -620,6 +620,8 @@ case "${1:-}" in
   sub)       pl_sub_url ;;
   qr)        if [ -n "$PL_DOMAIN" ]; then pl_sub_qr "${2:-plain}" "${3:-}"; else menu_links "${3:-}"; fi ;;
   users-sync) pl_users_apply ;;   # после обновления packetlab: ключи всех пользователей → инбаунды
+  rekey)     [ -n "${2:-}" ] || { ui_err "packetlab rekey <пользователь> [модуль …]"; exit 1; }
+             pl_users rekey "${@:2}" && pl_users_apply ;;   # новые ключи, старые ссылки перестают работать
   link)      for f in "${MODULES[@]}"; do   # packetlab link [формат] [пользователь]
                [ "$(mod_call "$f" mod_status)" = off ] || mod_call "$f" mod_link "${2:-uri}" "${3:-}"
              done ;;
