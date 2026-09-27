@@ -91,7 +91,8 @@ menu_main() {
       elif [ -z "$PL_DOMAIN" ] && [ "$(mod_meta "$f" MOD_NEEDS_DOMAIN)" != no ]; then
         :   # без домена такой протокол не поставить — не показываем
       else
-        installable+=("$f")    # «a» ставит и скрытые режимом — см. pl_installable
+        # «a» ставит и скрытые режимом — см. pl_installable
+        pl_can_install "$f" && installable+=("$f")
         if [ "$mode" = advanced ] || [ "$(mod_meta "$f" MOD_LEVEL)" = simple ]; then
           available+=("${#states[@]}")
         fi
@@ -242,8 +243,15 @@ pl_installable() {
   for f in "${MODULES[@]}"; do
     [ "$(mod_call "$f" mod_status)" = off ] || continue
     [ -z "$PL_DOMAIN" ] && [ "$(mod_meta "$f" MOD_NEEDS_DOMAIN)" != no ] && continue
+    pl_can_install "$f" || continue
     printf '%s\n' "$f"
   done
+}
+
+# Модуль может сам сказать «на этом сервере не встану» — mod_can_install
+# (Mieru без сборки mbox). Нет такой функции — значит, может.
+pl_can_install() {
+  ( . "$1"; ! declare -F mod_can_install >/dev/null || mod_can_install )
 }
 
 pl_names() {  # pl_names <файл>… → «REALITY, Mieru, …»

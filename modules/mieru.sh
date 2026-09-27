@@ -20,6 +20,10 @@ mod_status() {
   printf up
 }
 
+# Необязательная функция модуля: может ли он встать на этом сервере вообще.
+# «Установить все» пропускает тех, кто ответил «нет», а не валится на них.
+mod_can_install() { pl_singbox_has_mieru; }
+
 mod_install() {
   pl_singbox_has_tag "${MOD_ID}-in" && { ui_err "инбаунд ${MOD_ID}-in уже есть — сначала удалить"; return 1; }
   # Официальный sing-box на инбаунд mieru отвечает «unknown inbound type» —

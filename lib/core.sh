@@ -163,10 +163,17 @@ pl_ufw_orphans() {
 
 # -------------------------------------------------------------- haproxy ---
 # Бэкенды добавляются между маркерами, поэтому удаление точное и не задевает
-# ручные правки.
+# ручные правки. Маркер «# packetlab:<модуль>» всегда в конце строки и
+# сравнивается целиком: «anytls» — префикс «anytls-reality», и поиск подстроки
+# принимал чужой бэкенд за свой (установка AnyTLS пропускала маршрут, удаление
+# снесло бы маршрут AnyTLS + REALITY).
+pl_haproxy_marked() {  # pl_haproxy_marked <модуль> — есть ли строки с его маркером
+  grep -qE "# packetlab:${1}[[:space:]]*\$" "$PL_HAP" 2>/dev/null
+}
+
 pl_haproxy_add_sni() {
   local sni="$1" backend="$2" port="$3"
-  grep -q "packetlab:${backend}" "$PL_HAP" 2>/dev/null && return 0
+  pl_haproxy_marked "$backend" && return 0
   local bak="$PL_HAP.bak-$(date +%s)"
   cp -a "$PL_HAP" "$bak"
   python3 - "$sni" "$backend" "$port" <<'PY'
@@ -191,11 +198,13 @@ pl_haproxy_del_sni() {
 import sys,re
 p="/etc/haproxy/haproxy.cfg"; be=sys.argv[1]
 lines=open(p).read().split("\n"); out=[]; skip=False
+mark=f"# packetlab:{be}"
 for l in lines:
-    if l.startswith(f"backend {be}") and f"packetlab:{be}" in l: skip=True; continue
+    ours=l.rstrip().endswith(mark)
+    if l.startswith(f"backend {be} ") and ours: skip=True; continue
     if skip and (l.startswith("backend ") or l.startswith("frontend ")): skip=False
     if skip: continue
-    if f"packetlab:{be}" in l: continue
+    if ours: continue
     out.append(l)
 open(p,"w").write("\n".join(out))
 PY
@@ -206,7 +215,7 @@ PY
 
 # Бэкенд модуля есть в haproxy? Маркер ставит pl_haproxy_add_sni.
 pl_haproxy_has_backend() {
-  grep -q "packetlab:${1}" "$PL_HAP" 2>/dev/null
+  pl_haproxy_marked "$1"
 }
 
 # Ключ в meta.json существует и непустой. Без него сервер подписок отдаёт
