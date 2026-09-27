@@ -73,7 +73,7 @@ menu_main_row() {  # menu_main_row <номер> <файл> <состояние>
 }
 
 menu_main() {
-  local i choice f mode visible=() installed=() available=() states=()
+  local i choice f mode visible=() installed=() available=() states=() installable=()
 
   while true; do
     mode=$(pl_ui_mode)
@@ -82,7 +82,7 @@ menu_main() {
     # Установленные — сверху, остальные ниже отдельным списком. Номера
     # сквозные: visible = installed + available. mod_status дёргается
     # один раз на модуль — он смотрит в конфиг, порты и UFW, это не бесплатно.
-    installed=(); available=(); states=()
+    installed=(); available=(); states=(); installable=()
     for f in "${MODULES[@]}"; do
       choice=$(mod_call "$f" mod_status)
       states+=("${choice:-?}")    # модуль упал — пусть будет «?», а не пустота
@@ -90,8 +90,11 @@ menu_main() {
         installed+=("${#states[@]}")
       elif [ -z "$PL_DOMAIN" ] && [ "$(mod_meta "$f" MOD_NEEDS_DOMAIN)" != no ]; then
         :   # без домена такой протокол не поставить — не показываем
-      elif [ "$mode" = advanced ] || [ "$(mod_meta "$f" MOD_LEVEL)" = simple ]; then
-        available+=("${#states[@]}")
+      else
+        installable+=("$f")    # «a» ставит и скрытые режимом — см. pl_installable
+        if [ "$mode" = advanced ] || [ "$(mod_meta "$f" MOD_LEVEL)" = simple ]; then
+          available+=("${#states[@]}")
+        fi
       fi
     done
     visible=()
@@ -111,6 +114,9 @@ menu_main() {
         menu_main_row "$i" "${MODULES[$((f-1))]}" off
         i=$((i+1))
       done
+    fi
+    if [ "${#installable[@]}" -gt 1 ]; then
+      ui_row "a" "установить все" "" "${#installable[@]} шт."
     fi
 
     ui_section "сервер"
@@ -138,6 +144,14 @@ menu_main() {
     case "$choice" in
       ''|q|Q) printf '\n'; exit 0 ;;
       m|M) ui_mode_toggle ;;
+      a|A) if [ "${#installable[@]}" -gt 1 ]; then
+             if ui_confirm "поставить $(pl_names "${installable[@]}")? sing-box перезапустится на каждом — соединения несколько раз оборвутся"; then
+               pl_install_all "${installable[@]}"
+               ui_ask "enter" >/dev/null
+             fi
+           else
+             ui_err "нет такого пункта"; sleep 1
+           fi ;;
       s) [ -t 1 ] && printf '\033[H\033[2J'; menu_health ;;
       u) menu_users ;;
       l) menu_sub ;;
@@ -217,6 +231,53 @@ pl_postflight() {
              ui_note "journalctl -u $engine -n 20 --no-pager" ;;
     off)     ui_err  "инбаунд в конфиге не появился" ;;
   esac
+}
+
+# ------------------------------------------------------- всё разом ---
+# Протоколы, которые этот сервер может поднять и которых ещё нет: без домена —
+# только обходящиеся без него. Уровень не важен: режим меню прячет пункты, а не
+# запрещает их, а «все» значит все.
+pl_installable() {
+  local f
+  for f in "${MODULES[@]}"; do
+    [ "$(mod_call "$f" mod_status)" = off ] || continue
+    [ -z "$PL_DOMAIN" ] && [ "$(mod_meta "$f" MOD_NEEDS_DOMAIN)" != no ] && continue
+    printf '%s\n' "$f"
+  done
+}
+
+pl_names() {  # pl_names <файл>… → «REALITY, Mieru, …»
+  local f out=''
+  for f in "$@"; do out="${out:+$out, }$(mod_meta "$f" MOD_NAME)"; done
+  printf '%s' "$out"
+}
+
+# Ставит по очереди, каждый со своими проверками до и после. Упавший не
+# останавливает остальные — в конце итог: что встало, что нет. 0 — все встали.
+pl_install_all() {  # pl_install_all <файл>…
+  local f ok=() failed=()
+  [ "$#" -eq 0 ] && { ui_note "ставить нечего — всё, что можно на этом сервере, уже стоит"; return 0; }
+  for f in "$@"; do
+    ui_section "$(mod_meta "$f" MOD_NAME)"
+    if pl_preflight "$f" && mod_call "$f" mod_install; then
+      pl_postflight "$f"
+    fi
+    case "$(mod_call "$f" mod_status)" in
+      up|blocked) ok+=("$f") ;;
+      *)          failed+=("$f") ;;
+    esac
+  done
+  ui_section "итог"
+  [ "${#ok[@]}" -gt 0 ] && ui_ok "установлены: $(pl_names "${ok[@]}")"
+  if [ "${#failed[@]}" -gt 0 ]; then
+    ui_err "не встали: $(pl_names "${failed[@]}") — причины выше"
+    return 1
+  fi
+  if [ -n "$PL_DOMAIN" ]; then
+    ui_note "подписка уже отдаёт новые протоколы — обнови её в клиенте"
+  else
+    ui_note "ссылки и QR новых протоколов — пункт l главного меню"
+  fi
 }
 
 # ------------------------------------------------------- меню протокола ---
@@ -626,8 +687,12 @@ case "${1:-}" in
                [ "$(mod_call "$f" mod_status)" = off ] || mod_call "$f" mod_link "${2:-uri}" "${3:-}"
              done ;;
   relay)     shift; plr "$@" ;;
-  install)   f="$PL_ROOT/modules/${2:-}.sh"
-             [ -n "${2:-}" ] && [ -f "$f" ] || { ui_err "packetlab install <модуль>, модули: $(cd "$PL_ROOT/modules" && ls *.sh | sed 's/\.sh$//' | tr '\n' ' ')"; exit 1; }
+  install)   if [ "${2:-}" = all ]; then   # packetlab install all — всё, что этот сервер может поднять
+               mapfile -t files < <(pl_installable)
+               pl_install_all "${files[@]}"; exit $?
+             fi
+             f="$PL_ROOT/modules/${2:-}.sh"
+             [ -n "${2:-}" ] && [ -f "$f" ] || { ui_err "packetlab install <модуль>|all, модули: $(cd "$PL_ROOT/modules" && ls *.sh | sed 's/\.sh$//' | tr '\n' ' ')"; exit 1; }
              [ "$(mod_call "$f" mod_status)" = off ] || { ui_err "$(mod_meta "$f" MOD_NAME) уже установлен"; exit 1; }
              pl_preflight "$f" || { ui_note "установка отменена, конфиг не тронут"; exit 1; }
              mod_call "$f" mod_install && pl_postflight "$f" ;;

@@ -40,7 +40,12 @@ packetlab sub        # ссылка-подписка
 packetlab qr         # QR подписки (Karing, Hiddify); packetlab qr singbox — импорт в приложение sing-box
 packetlab link uri   # все ноды списком
 packetlab install anytls-reality   # поставить модуль без меню
+packetlab install all              # все протоколы, которые сервер может поднять (в меню — «a»)
 ```
+
+`install all` ставит по очереди всё, чего ещё нет (без домена — только REALITY,
+AnyTLS + REALITY и Mieru), каждый протокол со своими проверками; упавший не
+останавливает остальные, в конце — итог. sing-box перезапускается на каждом.
 
 ## Что внутри
 
