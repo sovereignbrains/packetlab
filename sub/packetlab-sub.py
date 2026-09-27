@@ -27,6 +27,7 @@ PORT = 9999
 # его раз в сутки обновляет packetlab-rules.timer (sub/update-rules.sh).
 RULES = Path("/var/lib/packetlab/rules")
 RULE_NAME = re.compile(r"^[a-z0-9-]+\.srs$")
+PUBLIC = {"name": "-"}  # «пользователь» публичных путей (наборы правил)
 
 
 def users():
@@ -105,14 +106,15 @@ def sing_box_version(ua: str) -> tuple:
     return (int(m.group(1)), int(m.group(2))) if m else (0, 0)
 
 
-def add_adblock(cfg: dict, base: str, core: tuple = (0, 0)) -> None:
+def add_adblock(cfg: dict, rules_url: str, core: tuple = (0, 0)) -> None:
     """Реклама режется в клиенте: DNS-запрос к рекламному домену получает отказ,
     а соединение по SNI (sniff) — reject; второе ловит и браузеры со своим DoH.
-    Правило встаёт после «напрямую», чтобы не ломать Qwen (mmstat.com в фильтре)."""
-    if not base or not (RULES / "adguard.srs").exists():
+    Правило встаёт после «напрямую», чтобы не ломать Qwen (mmstat.com в фильтре).
+    rules_url — публичный адрес наборов правил (без токена: см. Handler._resolve)."""
+    if not rules_url or not (RULES / "adguard.srs").exists():
         return
     rs = {"type": "remote", "tag": "ads", "format": "binary",
-          "url": f"{base}/rules/adguard.srs", "update_interval": "24h"}
+          "url": f"{rules_url}/adguard.srs", "update_interval": "24h"}
     # Качаем напрямую, а не через proxy: иначе без живого туннеля набор не
     # скачается, и клиент не стартует вовсе. Сама подписка скачивается так же.
     # С 1.14 это http_client без detour (download_detour там устарел и уйдёт
@@ -133,7 +135,7 @@ def add_adblock(cfg: dict, base: str, core: tuple = (0, 0)) -> None:
     cfg["dns"]["rules"].append({"rule_set": "ads", "action": "reject"})
 
 
-def build(fmt: str, user: str, base: str = "", core: tuple = (0, 0)) -> tuple[bytes, str]:
+def build(fmt: str, user: str, rules_url: str = "", core: tuple = (0, 0)) -> tuple[bytes, str]:
     strict = fmt == "singbox_strict"
     if strict:
         fmt = "singbox"
@@ -198,7 +200,7 @@ def build(fmt: str, user: str, base: str = "", core: tuple = (0, 0)) -> tuple[by
                 "default_domain_resolver": {"server": "local"},
             },
         }
-        add_adblock(cfg, base, core)
+        add_adblock(cfg, rules_url, core)
         return json.dumps(cfg, indent=2, ensure_ascii=False).encode(), "application/json"
 
 
@@ -207,9 +209,15 @@ class Handler(BaseHTTPRequestHandler):
     sys_version = ""
 
     def _resolve(self):
-        """/sub/<токен> — подписка, /sub/<токен>/rules/<имя>.srs — набор правил.
-        Правила отдаются только по живому токену, как и сама подписка."""
+        """/sub/<токен> — подписка, /sub/rules/<имя>.srs — набор правил.
+        Правила — публичный фильтр рекламы, секрета в них нет, и адрес без
+        токена: ядро пишет URL набора в свой журнал (ошибка скачивания), и токен
+        оттуда утекал в логи клиентов. Старый путь /sub/<токен>/rules/<имя>.srs
+        остаётся для клиентов, ещё не обновивших подписку.
+        Возвращает (пользователь или PUBLIC, имя набора или None)."""
         parts = self.path.split("?")[0].strip("/").split("/")
+        if len(parts) == 3 and parts[0] == "sub" and parts[1] == "rules" and RULE_NAME.match(parts[2]):
+            return PUBLIC, parts[2]
         if len(parts) not in (2, 4) or parts[0] != "sub" or not parts[1]:
             return None, None
         if len(parts) == 4 and (parts[2] != "rules" or not RULE_NAME.match(parts[3])):
@@ -246,11 +254,11 @@ class Handler(BaseHTTPRequestHandler):
         print(f"sub {user['name']} ua={ua[:120]!r}", flush=True)
         fmt = self.headers.get("X-Format") or detect(ua)
         dom = domain()
-        base = f"https://{dom}/sub/{user['sub_token']}" if dom else ""
+        rules_url = f"https://{dom}/sub/rules" if dom else ""
         # Без этого исключение при сборке обрывает соединение без ответа:
         # клиент видит «empty reply», а причина остаётся только в журнале.
         try:
-            body, ctype = build(fmt, user["name"], base, sing_box_version(ua))
+            body, ctype = build(fmt, user["name"], rules_url, sing_box_version(ua))
         except Exception:
             traceback.print_exc()
             self.send_response(500)
