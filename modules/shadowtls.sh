@@ -31,7 +31,7 @@ mod_install() {
   local target psk users
   # Как у REALITY: SNI делит haproxy, поэтому сайт для рукопожатия не должен быть занят
   # другим протоколом. ShadowTLS v3 требует TLS 1.3 на этом сайте.
-  target=$(pl_meta_get "${MOD_ID}_target"); [ -z "$target" ] && target=www.cloudflare.com
+  target=$(pl_meta_get "${MOD_ID}_target"); [ -z "$target" ] && target=www.google.com
   if grep -q "req.ssl_sni -i ${target} " "$PL_HAP" 2>/dev/null; then
     ui_err "SNI $target в haproxy уже занят другим протоколом"
     ui_note "задай другой сайт ключом ${MOD_ID}_target в $PL_META"
