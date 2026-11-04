@@ -40,7 +40,7 @@ META = ETC / "meta.json"
 SB = Path(os.environ.get("PL_SB", "/etc/sing-box/config.json"))
 
 NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,31}$")   # имя уходит в JSON конфигов и в ссылки
-FIELDS = ("uuid", "pass")
+FIELDS = ("uuid", "pass", "hex")   # hex — 32 hex-символа, секрет MTProxy
 
 
 def _load(p: Path, default):
@@ -63,6 +63,8 @@ def _save(p: Path, data) -> None:
 def _new(field: str) -> str:
     if field == "uuid":
         return str(uuid.uuid4())
+    if field == "hex":
+        return secrets.token_hex(16)
     return base64.urlsafe_b64encode(secrets.token_bytes(18)).decode()   # как pl_secret
 
 

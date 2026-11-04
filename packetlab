@@ -185,7 +185,7 @@ pl_preflight() {
 
   if [ -z "$PL_DOMAIN" ] && [ "$(mod_meta "$f" MOD_NEEDS_DOMAIN)" != no ]; then
     ui_err "сервер поставлен без домена — $(mod_meta "$f" MOD_NAME) требует домен и сертификат"
-    ui_note "без домена работают REALITY, AnyTLS + REALITY и Mieru"
+    ui_note "без домена работают REALITY, AnyTLS + REALITY, Mieru и Telegram MTProxy"
     rc=1
   fi
 
@@ -395,6 +395,11 @@ pl_users_apply() {
   done
   r=$(pl_users sync "${pairs[@]}") || { ui_err "не смог записать пользователей в конфиг sing-box"; return 1; }
   if [ "$r" = changed ]; then pl_singbox_apply || return 1; fi
+  # Модули не на sing-box (telemt) сами переписывают своих пользователей.
+  for f in "${MODULES[@]}"; do
+    ( . "$f"; ! declare -F mod_users_sync >/dev/null || mod_users_sync ) \
+      || ui_warn "$(mod_meta "$f" MOD_NAME): не смог обновить пользователей"
+  done
   pl_sub_reload
 }
 

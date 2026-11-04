@@ -9,7 +9,7 @@
 # сертификат через DNS-01 и поднимает Caddy с decoy-сайтом.
 #
 # Без домена (Enter на вопросе о домене или PL_NO_DOMAIN=1): ни Cloudflare,
-# ни сертификата, ни decoy — доступны только REALITY, AnyTLS + REALITY и Mieru,
+# ни сертификата, ни decoy — доступны только REALITY, AnyTLS + REALITY, Mieru и Telegram MTProxy,
 # в ссылках IP сервера.
 #
 # Протоколы НЕ ставятся автоматически — это делается из меню после установки.
@@ -135,7 +135,7 @@ elif [ -n "$DOMAIN" ]; then
   valid_domain "$DOMAIN" || die "PL_DOMAIN=$DOMAIN — не похоже на домен"
 else
   [ -n "$prev_domain" ] \
-    || say "без домена: только REALITY, AnyTLS + REALITY и Mieru — без Cloudflare и сертификата"
+    || say "без домена: только REALITY, AnyTLS + REALITY, Mieru и Telegram MTProxy — без Cloudflare и сертификата"
   while true; do
     if [ -n "$prev_domain" ]; then
       DOMAIN=$(ask "домен без поддомена" "$prev_domain")
@@ -560,7 +560,7 @@ get lib/users.py           "$PL_ROOT/lib/users.py"
 get relay/plr.sh           "$PL_ROOT/relay/plr.sh"
 get sub/packetlab-sub.py   "$PL_ROOT/sub/packetlab-sub.py"
 get sub/update-rules.sh    "$PL_ROOT/sub/update-rules.sh"
-for m in reality anytls-reality naive hy2 mieru ech; do
+for m in reality anytls-reality naive hy2 mieru ech telemt; do
   get "modules/$m.sh" "$PL_ROOT/modules/$m.sh"
 done
 chmod +x "$PL_ROOT/packetlab" "$PL_ROOT/relay/plr.sh" "$PL_ROOT/sub/packetlab-sub.py" "$PL_ROOT/lib/users.py" "$PL_ROOT/sub/update-rules.sh"
@@ -712,7 +712,7 @@ fi
 
 head_ "готово" "протоколы ставятся из меню"
 if [ "$NO_DOMAIN" = 1 ]; then
-  printf '  %sбез домена: доступны REALITY, AnyTLS + REALITY и Mieru, в ссылках %s%s\n' "$C_GRY" "$SERVER_IP" "$C_RST"
+  printf '  %sбез домена: доступны REALITY, AnyTLS + REALITY, Mieru и Telegram MTProxy, в ссылках %s%s\n' "$C_GRY" "$SERVER_IP" "$C_RST"
   printf '  %sподписки нет — ссылки и QR в меню, пункт l%s\n\n' "$C_GRY" "$C_RST"
 else
   printf '  %sпроверь, что A-запись %s → %s уже есть%s\n' "$C_GRY" "$DOMAIN" "$SERVER_IP" "$C_RST"
