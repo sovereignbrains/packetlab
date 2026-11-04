@@ -17,10 +17,6 @@ PL_CERT="/etc/letsencrypt/live/$PL_DOMAIN/fullchain.pem"
 PL_KEY="/etc/letsencrypt/live/$PL_DOMAIN/privkey.pem"
 
 # ------------------------------------------------------------- секреты ----
-pl_uuid()   { cat /proc/sys/kernel/random/uuid; }
-# Алфавит URL-safe: «+» из обычного base64 в ссылке становится %2B, а Karing его
-# обратно не раскодирует — пароль приходит на сервер испорченным.
-pl_secret() { openssl rand -base64 18 | tr '+/' '-_' | tr -d '\n'; }
 pl_hex()    { openssl rand -hex "${1:-8}" | tr -d '\n'; }
 pl_urlenc() { python3 -c 'import sys,urllib.parse;print(urllib.parse.quote(sys.argv[1],safe=""))' "$1"; }
 
@@ -243,11 +239,6 @@ pl_dns_ensure() {
     | grep -q '"success":true' || { ui_err "не смог создать A-запись $fqdn"; return 1; }
   ui_ok "создана A-запись $fqdn"
 }
-
-# Модулю нужен домен (сертификат, поддомен)? По умолчанию да: без домена
-# работают только те, кто явно объявил MOD_NEEDS_DOMAIN=no — REALITY-семейство
-# и Mieru. Модуль должен быть source'нут в этой (под)оболочке.
-pl_module_needs_domain() { [ "${MOD_NEEDS_DOMAIN:-yes}" != no ]; }
 
 # ---------------------------------------------------------- пользователи --
 # У каждого пользователя в каждом протоколе свои ключи — логика в lib/users.py

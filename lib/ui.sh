@@ -41,8 +41,6 @@ ui_vlen() {
 ui_repeat() { local n=$1 c=$2 out=''; while [ "$n" -gt 0 ]; do out="$out$c"; n=$((n-1)); done; printf '%s' "$out"; }
 
 # ----------------------------------------------------------------- рамки ---
-ui_rule() { printf '%s%s%s\n' "$C_DIM" "$(ui_repeat "$(ui_width)" '─')" "$C_RST"; }
-
 ui_head() {
   local title="$1" sub="${2:-}" w; w=$(ui_width)
   printf '\n%s%s%s\n' "$C_DIM" "$(ui_repeat "$w" '━')" "$C_RST"
@@ -84,7 +82,7 @@ ui_section() {
 
 # ---------------------------------------------------------------- статусы ---
 # up      — работает: конфиг, порт и firewall согласованы
-# blocked — инбаунд поднят, но порт закрыт в UFW (тот самый случай с TUIC)
+# blocked — инбаунд поднят, но порт закрыт в UFW (инбаунд работает, а снаружи недоступен)
 # down    — установлен, но не слушает
 # off     — не установлен
 ui_badge() {
@@ -184,18 +182,4 @@ ui_confirm() {
   printf '  %s!%s %s %s(y/N)%s ' "$C_YLW" "$C_RST" "$1" "$C_GRY" "$C_RST"
   read -r ans
   case "$ans" in [yY]|[yY][eE][sS]) return 0 ;; *) return 1 ;; esac
-}
-
-# спиннер для долгих шагов; переживает отсутствие tty
-ui_run() {
-  local msg="$1"; shift
-  printf '  %s·%s %s … ' "$C_CYN" "$C_RST" "$msg"
-  if "$@" >/tmp/packetlab-step.log 2>&1; then
-    printf '%s✓%s\n' "$C_GRN" "$C_RST"
-    return 0
-  else
-    printf '%s✗%s\n' "$C_RED" "$C_RST"
-    ui_note "лог: /tmp/packetlab-step.log"
-    return 1
-  fi
 }
