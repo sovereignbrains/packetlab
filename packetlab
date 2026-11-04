@@ -293,7 +293,7 @@ pl_install_all() {  # pl_install_all <файл>…
 
 # ------------------------------------------------------- меню протокола ---
 menu_module() {
-  local f="$1" name state link
+  local f="$1" name state link wlink
   name=$(mod_meta "$f" MOD_NAME)
 
   while true; do
@@ -329,9 +329,15 @@ menu_module() {
          else
            # Экран с чистого листа: QR высокий, под меню он уехал бы за край.
            link=$(mod_call "$f" mod_link uri)
+           wlink=$(mod_call "$f" mod_link web)
            ui_screen "$name" "ссылка и QR"
            printf '\n  %s\n\n' "$link"
            [ -n "$link" ] && ui_qr "$link"
+           # WEB-ссылка (Telegram: тип прокси WEB) — только у модулей, которые её умеют
+           if [ -n "$wlink" ]; then
+             printf '\n  %sWEB-прокси%s\n  %s\n' "$C_B" "$C_RST" "$wlink"
+             ui_qr "$wlink"
+           fi
          fi
          ui_ask "enter" >/dev/null ;;
       2) ui_confirm "переустановить $name? текущие ключи будут заменены" \
@@ -509,6 +515,11 @@ menu_links() {  # menu_links [пользователь] — без имени в
     [ -z "$link" ] && continue
     printf '\n  %s%s%s\n  %s\n' "$C_B" "$name" "$C_RST" "$link"
     ui_qr "$link"
+    link=$(mod_call "$f" mod_link web "$u")
+    if [ -n "$link" ]; then
+      printf '\n  %s%s, WEB-прокси%s\n  %s\n' "$C_B" "$name" "$C_RST" "$link"
+      ui_qr "$link"
+    fi
   done
 
   [ "$any" = 0 ] && ui_note "ни один протокол не установлен"

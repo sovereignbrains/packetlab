@@ -55,7 +55,7 @@ AnyTLS + REALITY, Mieru и Telegram MTProxy), каждый протокол со
 | Вход 443/tcp | haproxy, SNI-роутинг без терминации TLS |
 | Вход UDP | sing-box напрямую |
 | Ядро | одно — sing-box в сборке [mbox](https://github.com/enfein/mbox): апстрим + протокол Mieru от его автора, пакет закреплён `apt-mark hold` |
-| Протоколы | REALITY, AnyTLS + REALITY, AnyTLS + ECH, NaiveProxy, Hysteria2, Mieru — инбаунды sing-box; Telegram MTProxy ([telemt](https://github.com/telemt/telemt), FakeTLS, свой бинарник и служба) — вне подписки, ссылка 	g:// в меню |
+| Протоколы | REALITY, AnyTLS + REALITY, AnyTLS + ECH, NaiveProxy, Hysteria2, Mieru — инбаунды sing-box; Telegram MTProxy ([telemt](https://github.com/telemt/telemt), FakeTLS, свой бинарник и служба) — вне подписки, ссылки `tg://` в меню; с доменом ещё WEB-прокси Telegram (`tg://webproxy`, через Caddy, случайный путь) |
 | Маскировка | Caddy, decoy-сайт (с доменом); без домена чужой SNI уходит в REALITY |
 | Подписка | один URL, формат по User-Agent |
 
