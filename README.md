@@ -54,8 +54,8 @@ AnyTLS + REALITY, ShadowTLS v3, Mieru и Telegram MTProxy), каждый про�
 |---|---|
 | Вход 443/tcp | haproxy, SNI-роутинг без терминации TLS |
 | Вход UDP | sing-box напрямую |
-| Ядро | одно — sing-box в сборке [mbox](https://github.com/enfein/mbox): апстрим + протокол Mieru от его автора, пакет закреплён `apt-mark hold` |
-| Протоколы | REALITY, AnyTLS + REALITY, ShadowTLS v3 (shadowsocks-2022 внутри; клиентское звено — два outbound через detour, подписка отдаёт оба), AnyTLS + ECH, NaiveProxy, Hysteria2, Mieru — инбаунды sing-box; Telegram MTProxy ([telemt](https://github.com/telemt/telemt), FakeTLS, свой бинарник и служба) — вне подписки, ссылки `tg://` в меню; с доменом ещё WEB-прокси Telegram (`tg://webproxy`, через Caddy, случайный путь) |
+| Ядро | одно — официальный sing-box (SagerNet); уже стоящий установщик не заменяет и не понижает |
+| Протоколы | REALITY, AnyTLS + REALITY, ShadowTLS v3 (shadowsocks-2022 внутри; клиентское звено — два outbound через detour, подписка отдаёт оба), AnyTLS + ECH, NaiveProxy, Hysteria2 — инбаунды sing-box (Mieru — только если стоящее ядро его знает, сборка [mbox](https://github.com/enfein/mbox) ставится вручную); Telegram MTProxy ([telemt](https://github.com/telemt/telemt), FakeTLS, свой бинарник и служба) — вне подписки, ссылки `tg://` в меню; с доменом ещё WEB-прокси Telegram (`tg://webproxy`, через Caddy, случайный путь) |
 | Маскировка | Caddy, decoy-сайт (с доменом); без домена чужой SNI уходит в REALITY |
 | Подписка | один URL, формат по User-Agent |
 
@@ -83,7 +83,7 @@ AnyTLS + REALITY, ShadowTLS v3, Mieru и Telegram MTProxy), каждый про�
 `mod_status`, `mod_install`, `mod_remove`, `mod_link <формат> [пользователь]`.
 `MOD_USERS` — шаблон записи пользователя в инбаунде (`%name%`, `%uuid%`, `%pass%`).
 Необязательная `mod_can_install` говорит, может ли модуль встать на этом сервере
-вообще (Mieru — только на сборке mbox); «установить все» пропускает ответивших «нет». Меню сканирует папку и
+вообще (Mieru — только на ядре со сборкой mbox); «установить все» пропускает ответивших «нет». Меню сканирует папку и
 подхватывает новый файл само, править диспетчер не нужно.
 
 `mod_status` сверяет три источника — конфиг, реально слушающий порт и правило

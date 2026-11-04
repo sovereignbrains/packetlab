@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Mieru — инбаунд sing-box. Протокол есть в сборке mbox (github.com/enfein/mbox):
 # апстримный sing-box плюс один коммит protocol/mieru от автора Mieru.
-# Отдельный сервер mita больше не нужен — install.sh ставит mbox вместо sing-box.
+# Отдельный сервер mita не нужен. Официальное ядро протокола не знает, а install.sh
+# его на mbox больше не меняет: модуль встаёт, только если mbox поставлен вручную.
 MOD_ID=mieru
 MOD_NAME="Mieru"
 MOD_DESC="TCP, свой шифр; инбаунд sing-box (сборка mbox)"
@@ -30,7 +31,7 @@ mod_install() {
   # ловим до записи в конфиг и говорим, что делать.
   pl_singbox_has_mieru || {
     ui_err "этот sing-box не знает mieru — нужна сборка mbox"
-    ui_note "перезапусти install.sh: он поставит mbox вместо официального sing-box"
+    ui_note "официальное ядро Mieru не знает; нужна сборка mbox (github.com/enfein/mbox), ставится вручную"
     return 1
   }
   local users; users=$(pl_inbound_users) || return 1

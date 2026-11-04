@@ -3,13 +3,12 @@
 #
 #   wget -qO- https://raw.githubusercontent.com/sovereignbrains/packetlab/main/install.sh | bash
 #
-# Что делает: ставит sing-box (сборка mbox — апстрим + протокол Mieru, другие
-# ядра не нужны), haproxy как SNI-мультиплексор, тюнит ядро, поднимает сервер
+# Что делает: ставит официальный sing-box (уже стоящий не трогает), haproxy как SNI-мультиплексор, тюнит ядро, поднимает сервер
 # подписок и ставит CLI `packetlab`. С доменом вдобавок выпускает wildcard-
 # сертификат через DNS-01 и поднимает Caddy с decoy-сайтом.
 #
 # Без домена (Enter на вопросе о домене или PL_NO_DOMAIN=1): ни Cloudflare,
-# ни сертификата, ни decoy — доступны только REALITY, AnyTLS + REALITY, Mieru и Telegram MTProxy,
+# ни сертификата, ни decoy — доступны только REALITY, AnyTLS + REALITY, ShadowTLS и Telegram MTProxy,
 # в ссылках IP сервера.
 #
 # Протоколы НЕ ставятся автоматически — это делается из меню после установки.
@@ -135,7 +134,7 @@ elif [ -n "$DOMAIN" ]; then
   valid_domain "$DOMAIN" || die "PL_DOMAIN=$DOMAIN — не похоже на домен"
 else
   [ -n "$prev_domain" ] \
-    || say "без домена: только REALITY, AnyTLS + REALITY, Mieru и Telegram MTProxy — без Cloudflare и сертификата"
+    || say "без домена: только REALITY, AnyTLS + REALITY, ShadowTLS и Telegram MTProxy — без Cloudflare и сертификата"
   while true; do
     if [ -n "$prev_domain" ]; then
       DOMAIN=$(ask "домен без поддомена" "$prev_domain")
@@ -269,13 +268,14 @@ fetch_deb() {   # fetch_deb <owner/repo> <шаблон-имени>
   rm -f "$tmp"
 }
 
-step "sing-box" "сборка mbox: апстрим + Mieru"
-# Ядро одно. Mieru — инбаунд sing-box из сборки mbox (github.com/enfein/mbox):
-# апстримный sing-box плюс один коммит protocol/mieru от автора Mieru.
-# Отдельный сервер mita и пустой mihomo больше не ставятся.
+step "sing-box" "официальное ядро"
+# Ядро одно — официальный sing-box (SagerNet). Уже стоящий не трогаем и не
+# понижаем: ни замены на сборку mbox, ни apt-mark hold. Mieru — инбаунд,
+# которого в официальном ядре нет; модуль включается, только если стоящее
+# ядро его знает (сборка mbox, поставленная вручную).
 sb_ver() { sing-box version 2>/dev/null | head -1 | awk '{print $3}'; }
-# По версии mbox не отличить («sing-box 1.14.1»), поэтому спрашиваем сам
-# бинарник: официальный на инбаунд mieru отвечает «unknown inbound type».
+# По версии mbox не отличить, поэтому спрашиваем сам бинарник: официальный
+# на инбаунд mieru отвечает «unknown inbound type».
 sb_has_mieru() {
   local t rc
   t=$(mktemp)
@@ -285,19 +285,17 @@ sb_has_mieru() {
   return $rc
 }
 
-if command -v sing-box >/dev/null && sb_has_mieru; then
-  ok "sing-box $(sb_ver) с Mieru уже стоит"
+if command -v sing-box >/dev/null; then
+  if sb_has_mieru; then
+    ok "sing-box $(sb_ver) (со сборкой Mieru) уже стоит — не трогаю"
+  else
+    ok "sing-box $(sb_ver) уже стоит — не трогаю"
+  fi
 else
-  command -v sing-box >/dev/null \
-    && say "стоит официальный sing-box $(sb_ver) — меняю на mbox (апстрим + Mieru)"
-  apt-mark unhold sing-box >/dev/null 2>&1
-  fetch_deb enfein/mbox 'linux_amd64\.deb$' || die "не смог скачать или поставить mbox"
-  sb_has_mieru || die "поставленный sing-box не знает mieru — что-то не так со сборкой mbox"
-  ok "sing-box $(sb_ver) + Mieru"
+  fetch_deb SagerNet/sing-box '_linux_amd64\.deb$' || die "не смог скачать или поставить sing-box"
+  command -v sing-box >/dev/null || die "sing-box не появился после установки"
+  ok "sing-box $(sb_ver)"
 fi
-# Пакет mbox называется так же, как официальный: подключённый репозиторий
-# SagerNet при apt upgrade «обновил» бы его обратно, и Mieru молча пропал бы.
-apt-mark hold sing-box >/dev/null 2>&1 && ok "пакет закреплён (apt-mark hold sing-box)"
 
 # Хвосты прошлых версий packetlab. Пароль Mieru остаётся в meta.json, так что
 # после переустановки протокола из меню ссылки у клиентов не поменяются.
@@ -715,7 +713,7 @@ fi
 
 head_ "готово" "протоколы ставятся из меню"
 if [ "$NO_DOMAIN" = 1 ]; then
-  printf '  %sбез домена: доступны REALITY, AnyTLS + REALITY, Mieru и Telegram MTProxy, в ссылках %s%s\n' "$C_GRY" "$SERVER_IP" "$C_RST"
+  printf '  %sбез домена: доступны REALITY, AnyTLS + REALITY, ShadowTLS и Telegram MTProxy, в ссылках %s%s\n' "$C_GRY" "$SERVER_IP" "$C_RST"
   printf '  %sподписки нет — ссылки и QR в меню, пункт l%s\n\n' "$C_GRY" "$C_RST"
 else
   printf '  %sпроверь, что A-запись %s → %s уже есть%s\n' "$C_GRY" "$DOMAIN" "$SERVER_IP" "$C_RST"
