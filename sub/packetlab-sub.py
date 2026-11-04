@@ -147,14 +147,23 @@ def build(fmt: str, user: str, rules_url: str = "", core: tuple = (0, 0)) -> tup
 
     if fmt == "singbox":
         # Один сломанный модуль не должен ронять всю подписку.
-        outs = []
+        outs, helpers = [], []
         for p in parts:
             try:
-                outs.append(json.loads(p))
+                o = json.loads(p)
             except json.JSONDecodeError:
                 continue
+            if isinstance(o, list):
+                # Нода из нескольких звеньев (ShadowTLS: shadowsocks поверх shadowtls
+                # через detour): первое звено выбирают в списке, остальные только
+                # объявлены и в selector/urltest не попадают.
+                if o:
+                    outs.append(o[0])
+                    helpers.extend(o[1:])
+            else:
+                outs.append(o)
         tags = [o["tag"] for o in outs]
-        own_hosts = sorted({o["server"] for o in outs if o.get("server")})
+        own_hosts = sorted({o["server"] for o in outs + helpers if o.get("server")})
         cfg_dns = {
             "servers": [
                 {"type": "tls", "tag": "remote", "server": "1.1.1.1", "detour": "proxy"},
@@ -183,7 +192,7 @@ def build(fmt: str, user: str, rules_url: str = "", core: tuple = (0, 0)) -> tup
                     "url": "https://www.gstatic.com/generate_204",
                     "interval": "3m", "tolerance": 50,
                 }]
-                + outs
+                + outs + helpers
                 + [{"type": "direct", "tag": "direct"}]
             ),
             "route": {

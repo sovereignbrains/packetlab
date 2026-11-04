@@ -548,7 +548,7 @@ get lib/sysctl.conf         "$PL_ROOT/lib/sysctl.conf"
 get relay/plr.sh           "$PL_ROOT/relay/plr.sh"
 get sub/packetlab-sub.py   "$PL_ROOT/sub/packetlab-sub.py"
 get sub/update-rules.sh    "$PL_ROOT/sub/update-rules.sh"
-for m in reality anytls-reality naive hy2 mieru ech telemt; do
+for m in reality anytls-reality shadowtls naive hy2 mieru ech telemt; do
   get "modules/$m.sh" "$PL_ROOT/modules/$m.sh"
 done
 chmod +x "$PL_ROOT/packetlab" "$PL_ROOT/relay/plr.sh" "$PL_ROOT/sub/packetlab-sub.py" "$PL_ROOT/lib/users.py" "$PL_ROOT/sub/update-rules.sh"

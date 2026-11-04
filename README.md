@@ -17,7 +17,7 @@ Debian 13, x86_64, root. Установщик спрашивает домен �
   wildcard-сертификат по DNS-01, decoy-сайт, подписка, все протоколы.
   Zone ID установщик находит по токену сам, спрашивает — только если токен зону не видит;
 - **без домена** (пустой Enter) — ни Cloudflare, ни сертификата: доступны REALITY,
-  AnyTLS + REALITY, Mieru и Telegram MTProxy, в ссылках IP сервера, подписки нет (ссылки и QR — в меню).
+  AnyTLS + REALITY, ShadowTLS v3, Mieru и Telegram MTProxy, в ссылках IP сервера, подписки нет (ссылки и QR — в меню).
 
 Без интерактива (удобно для нескольких серверов):
 
@@ -45,7 +45,7 @@ packetlab tune                     # тюнинг ядра из lib/sysctl.conf:
 ```
 
 `install all` ставит по очереди всё, чего ещё нет (без домена — только REALITY,
-AnyTLS + REALITY, Mieru и Telegram MTProxy), каждый протокол со своими проверками; упавший не
+AnyTLS + REALITY, ShadowTLS v3, Mieru и Telegram MTProxy), каждый протокол со своими проверками; упавший не
 останавливает остальные, в конце — итог. sing-box перезапускается на каждом.
 
 ## Что внутри
@@ -55,7 +55,7 @@ AnyTLS + REALITY, Mieru и Telegram MTProxy), каждый протокол со
 | Вход 443/tcp | haproxy, SNI-роутинг без терминации TLS |
 | Вход UDP | sing-box напрямую |
 | Ядро | одно — sing-box в сборке [mbox](https://github.com/enfein/mbox): апстрим + протокол Mieru от его автора, пакет закреплён `apt-mark hold` |
-| Протоколы | REALITY, AnyTLS + REALITY, AnyTLS + ECH, NaiveProxy, Hysteria2, Mieru — инбаунды sing-box; Telegram MTProxy ([telemt](https://github.com/telemt/telemt), FakeTLS, свой бинарник и служба) — вне подписки, ссылки `tg://` в меню; с доменом ещё WEB-прокси Telegram (`tg://webproxy`, через Caddy, случайный путь) |
+| Протоколы | REALITY, AnyTLS + REALITY, ShadowTLS v3 (shadowsocks-2022 внутри; клиентское звено — два outbound через detour, подписка отдаёт оба), AnyTLS + ECH, NaiveProxy, Hysteria2, Mieru — инбаунды sing-box; Telegram MTProxy ([telemt](https://github.com/telemt/telemt), FakeTLS, свой бинарник и служба) — вне подписки, ссылки `tg://` в меню; с доменом ещё WEB-прокси Telegram (`tg://webproxy`, через Caddy, случайный путь) |
 | Маскировка | Caddy, decoy-сайт (с доменом); без домена чужой SNI уходит в REALITY |
 | Подписка | один URL, формат по User-Agent |
 
