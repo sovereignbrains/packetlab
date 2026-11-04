@@ -25,17 +25,17 @@ pl_meta_get() {
   python3 -c "import json,sys;print(json.load(open('$PL_META')).get(sys.argv[1],''))" "$1" 2>/dev/null
 }
 pl_meta_set() {
-  python3 - "$1" "$2" <<'PY'
-import json,sys
-p="/etc/packetlab/meta.json"
+  PL_META="$PL_META" python3 - "$1" "$2" <<'PY'
+import json,os,sys
+p=os.environ["PL_META"]
 d=json.load(open(p)); d[sys.argv[1]]=sys.argv[2]
 json.dump(d,open(p,"w"),indent=2,ensure_ascii=False)
 PY
 }
 pl_meta_del() {
-  python3 - "$@" <<'PY'
-import json,sys
-p="/etc/packetlab/meta.json"
+  PL_META="$PL_META" python3 - "$@" <<'PY'
+import json,os,sys
+p=os.environ["PL_META"]
 d=json.load(open(p))
 for k in sys.argv[1:]: d.pop(k,None)
 json.dump(d,open(p,"w"),indent=2,ensure_ascii=False)

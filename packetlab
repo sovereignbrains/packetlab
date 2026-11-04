@@ -716,6 +716,9 @@ case "${1:-}" in
   link)      for f in "${MODULES[@]}"; do   # packetlab link [формат] [пользователь]
                [ "$(mod_call "$f" mod_status)" = off ] || mod_call "$f" mod_link "${2:-uri}" "${3:-}"
              done ;;
+  reconfig)  [ -n "${2:-}" ] || { ui_err "packetlab reconfig <модуль> [параметр=значение …]"; exit 1; }   # применить настройки к стоящему модулю без смены паролей
+             f="$PL_ROOT/modules/$2.sh"; [ -f "$f" ] || { ui_err "нет модуля $2"; exit 1; }
+             ( . "$f"; declare -F mod_reconfig >/dev/null || { ui_err "у модуля $2 нет reconfig"; exit 1; }; mod_reconfig "${@:3}" ) ;;
   relay)     shift; plr "$@" ;;
   install)   if [ "${2:-}" = all ]; then   # packetlab install all — всё, что этот сервер может поднять
                mapfile -t files < <(pl_installable)
