@@ -354,7 +354,7 @@ fi   # ↑ сертификат
 # ------------------------------------------------------------- тюнинг ----
 step "тюнинг ядра"
 cat > /etc/sysctl.d/99-packetlab.conf <<'SYS'
-# QUIC (TUIC, Hysteria2) упирается в размер UDP-буферов: без этого
+# QUIC (Hysteria2) упирается в размер UDP-буферов: без этого
 # quic-go пишет предупреждение в лог и режет пропускную способность.
 net.core.rmem_max = 16777216
 net.core.wmem_max = 16777216
@@ -560,7 +560,7 @@ get lib/users.py           "$PL_ROOT/lib/users.py"
 get relay/plr.sh           "$PL_ROOT/relay/plr.sh"
 get sub/packetlab-sub.py   "$PL_ROOT/sub/packetlab-sub.py"
 get sub/update-rules.sh    "$PL_ROOT/sub/update-rules.sh"
-for m in reality tuic anytls anytls-reality naive hy2 mieru ech; do
+for m in reality anytls-reality naive hy2 mieru ech; do
   get "modules/$m.sh" "$PL_ROOT/modules/$m.sh"
 done
 chmod +x "$PL_ROOT/packetlab" "$PL_ROOT/relay/plr.sh" "$PL_ROOT/sub/packetlab-sub.py" "$PL_ROOT/lib/users.py" "$PL_ROOT/sub/update-rules.sh"
@@ -621,7 +621,7 @@ fi
 ok "состояние в $PL_ETC"
 
 # Секция firewall выше сбрасывает ufw и открывает только SSH и 443 — правила
-# уже установленных протоколов (Hysteria2, TUIC, Mieru и т.п.) при этом
+# уже установленных протоколов (Hysteria2, Mieru и т.п.) при этом
 # теряются, а mod_install, который их создаёт, при повторном запуске
 # install.sh не вызывается. Дочиняем: для каждого модуля, который уже
 # сконфигурирован (mod_status != off), восстанавливаем его правило.

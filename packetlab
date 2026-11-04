@@ -42,7 +42,7 @@ pl_ui_mode() {
 ui_mode_toggle() {
   if [ "$(pl_ui_mode)" = simple ]; then
     if [ "$(pl_meta_get advanced_warned)" != true ]; then
-      ui_confirm "advanced открывает ECH/TUIC/Hysteria2, тюнинг ядра, продление сертификата и правку пользователей — по одной неверной команде можно сломать рабочий стек. продолжить?" \
+      ui_confirm "advanced открывает ECH/Hysteria2, тюнинг ядра, продление сертификата и правку пользователей — по одной неверной команде можно сломать рабочий стек. продолжить?" \
         || return
       pl_meta_set advanced_warned true
     fi

@@ -54,7 +54,7 @@ AnyTLS + REALITY и Mieru), каждый протокол со своими пр
 | Вход 443/tcp | haproxy, SNI-роутинг без терминации TLS |
 | Вход UDP | sing-box напрямую |
 | Ядро | одно — sing-box в сборке [mbox](https://github.com/enfein/mbox): апстрим + протокол Mieru от его автора, пакет закреплён `apt-mark hold` |
-| Протоколы | REALITY, AnyTLS, AnyTLS + REALITY, AnyTLS + ECH, TUIC, NaiveProxy, Hysteria2, Mieru — все инбаунды sing-box |
+| Протоколы | REALITY, AnyTLS + REALITY, AnyTLS + ECH, NaiveProxy, Hysteria2, Mieru — все инбаунды sing-box |
 | Маскировка | Caddy, decoy-сайт (с доменом); без домена чужой SNI уходит в REALITY |
 | Подписка | один URL, формат по User-Agent |
 
