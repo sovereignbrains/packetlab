@@ -29,6 +29,8 @@ mod_status() {
 #  - hy2_obfs в meta.json (salamander | gecko): обфускация QUIC. По умолчанию выключена: она
 #    меняет ссылки всех клиентов, а gecko понимает только sing-box ≥ 1.14 (не mihomo и не
 #    официальный Hysteria2). Пароль обфускации (hy2_obfs_pass) выпускается сам.
+#    04.11: у владельца с gecko клиент (Sovereign, sing-box 1.14.4) не соединялся, с salamander
+#    заработало сразу — для живых клиентов брать salamander, gecko только после проверки.
 #  - hy2_bbr в meta.json (conservative | standard | aggressive): профиль BBR, по умолчанию standard.
 _hy2_extras() {
   local ob bb pass=""
