@@ -170,6 +170,13 @@ def main(argv):
                     meta.pop(f"{mod}_{f}", None)
             _save(META, meta)
         _save(USERS, us)
+    elif cmd == "drop":   # drop <модуль> …: модуль удалён — ключи у всех пользователей тоже
+        gone = 0
+        for u in us:
+            for mod in args:
+                gone += u.get("creds", {}).pop(mod, None) is not None
+        if gone:
+            _save(USERS, us)
     elif cmd == "sync":
         return sync(us, args)
     else:

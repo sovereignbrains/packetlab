@@ -24,6 +24,9 @@ done
 mod_meta() {  # mod_meta <файл> <переменная>
   ( . "$1"; eval "printf '%s' \"\${$2:-}\"" )
 }
+pl_mod_remove() {  # pl_mod_remove <файл> — удалить модуль и ключи всех пользователей в нём
+  mod_call "$1" mod_remove && pl_users drop "$(mod_meta "$1" MOD_ID)"
+}
 mod_call() {  # mod_call <файл> <функция> [аргументы]
   local f="$1" fn="$2"; shift 2
   ( . "$f"; "$fn" "$@" )
@@ -332,7 +335,7 @@ menu_module() {
          fi
          ui_ask "enter" >/dev/null ;;
       2) ui_confirm "переустановить $name? текущие ключи будут заменены" \
-           && { mod_call "$f" mod_remove \
+           && { pl_mod_remove "$f" \
                 || { ui_err "удаление не удалось, установка отменена"; ui_ask "enter" >/dev/null; continue; }
                 if pl_preflight "$f"; then
                   mod_call "$f" mod_install && pl_postflight "$f"
@@ -341,7 +344,7 @@ menu_module() {
                 fi; }
          ui_ask "enter" >/dev/null ;;
       3) ui_confirm "удалить $name? откат — только переустановка с новыми ключами" \
-           && { mod_call "$f" mod_remove && ui_ok "удалён"; }
+           && { pl_mod_remove "$f" && ui_ok "удалён"; }
          ui_ask "enter" >/dev/null ;;
       4) pl_ufw_open "$(mod_meta "$f" MOD_PORT)" "$(mod_meta "$f" MOD_PROTO)" \
            "$(mod_meta "$f" MOD_ID)" && ui_ok "правило добавлено"
@@ -707,6 +710,6 @@ case "${1:-}" in
   remove)    f="$PL_ROOT/modules/${2:-}.sh"   # packetlab remove <модуль> — без вопросов, как пункт «удалить» в меню
              [ -n "${2:-}" ] && [ -f "$f" ] || { ui_err "packetlab remove <модуль>"; exit 1; }
              [ "$(mod_call "$f" mod_status)" != off ] || { ui_err "$(mod_meta "$f" MOD_NAME) не установлен"; exit 1; }
-             mod_call "$f" mod_remove && ui_ok "$(mod_meta "$f" MOD_NAME) удалён" ;;
+             pl_mod_remove "$f" && ui_ok "$(mod_meta "$f" MOD_NAME) удалён" ;;
   *)         ui_err "неизвестная команда: $1"; exit 1 ;;
 esac
