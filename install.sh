@@ -353,24 +353,11 @@ fi   # ↑ сертификат
 
 # ------------------------------------------------------------- тюнинг ----
 step "тюнинг ядра"
-cat > /etc/sysctl.d/99-packetlab.conf <<'SYS'
-# QUIC (Hysteria2) упирается в размер UDP-буферов: без этого
-# quic-go пишет предупреждение в лог и режет пропускную способность.
-net.core.rmem_max = 16777216
-net.core.wmem_max = 16777216
-net.core.rmem_default = 4194304
-net.core.wmem_default = 4194304
-net.core.default_qdisc = fq
-net.ipv4.tcp_congestion_control = bbr
-net.ipv4.tcp_fastopen = 3
-# хостер режет исходящий ICMP (100% потерь даже до 1.1.1.1), поэтому
-# классический PMTUD через ICMP "fragmentation needed" не работает —
-# TCP-пробинг определяет реальный MTU пути сам, без опоры на ICMP.
-net.ipv4.tcp_mtu_probing = 1
-SYS
+curl -fsSL "$REPO_RAW/lib/sysctl.conf" -o /etc/sysctl.d/99-packetlab.conf \
+  || die "не смог скачать lib/sysctl.conf"
 sysctl -p /etc/sysctl.d/99-packetlab.conf >/dev/null 2>&1
 [ "$(sysctl -n net.ipv4.tcp_congestion_control)" = bbr ] \
-  && ok "bbr + fq, буферы 16 МБ" || warn "bbr не активировался, проверь модуль ядра"
+  && ok "bbr + fq, буферы 32 МБ, очереди и таймауты" || warn "bbr не активировался, проверь модуль ядра"
 
 # -------------------------------------------------------------- firewall -
 step "firewall"
@@ -557,6 +544,7 @@ get lib/core.sh            "$PL_ROOT/lib/core.sh"
 get lib/state.sh           "$PL_ROOT/lib/state.sh"
 get lib/relay.sh           "$PL_ROOT/lib/relay.sh"
 get lib/users.py           "$PL_ROOT/lib/users.py"
+get lib/sysctl.conf         "$PL_ROOT/lib/sysctl.conf"
 get relay/plr.sh           "$PL_ROOT/relay/plr.sh"
 get sub/packetlab-sub.py   "$PL_ROOT/sub/packetlab-sub.py"
 get sub/update-rules.sh    "$PL_ROOT/sub/update-rules.sh"

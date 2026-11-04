@@ -41,6 +41,7 @@ packetlab qr         # QR подписки (Karing, Hiddify); packetlab qr singb
 packetlab link uri   # все ноды списком
 packetlab install anytls-reality   # поставить модуль без меню
 packetlab install all              # все протоколы, которые сервер может поднять (в меню — «a»)
+packetlab tune                     # тюнинг ядра из lib/sysctl.conf: BBR+fq, буферы 32 МБ, очереди (в расширенном меню — «t»)
 ```
 
 `install all` ставит по очереди всё, чего ещё нет (без домена — только REALITY,

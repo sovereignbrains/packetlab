@@ -647,21 +647,23 @@ menu_cert() {
 }
 
 # --------------------------------------------------------- тюнинг ядра ---
-PL_SYSCTL=/etc/sysctl.d/99-packetlab.conf
-
 menu_sysctl() {
-  local r w q c
+  local r w q c t i
   while true; do
     r=$(sysctl -n net.core.rmem_max 2>/dev/null || echo 0)
     w=$(sysctl -n net.core.wmem_max 2>/dev/null || echo 0)
+    t=$(sysctl -n net.ipv4.tcp_rmem 2>/dev/null | awk '{print $3+0}')
+    i=$(sysctl -n net.ipv4.tcp_slow_start_after_idle 2>/dev/null || echo 1)
     q=$(sysctl -n net.core.default_qdisc 2>/dev/null || echo '?')
     c=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo '?')
 
-    ui_screen "тюнинг ядра" "буферы UDP · bbr + fq"
+    ui_screen "тюнинг ядра" "буферы · bbr + fq · очереди"
     ui_row "" "rmem_max" "$([ "$r" -ge 16777216 ] && printf up || printf off)" "$r"
     ui_row "" "wmem_max" "$([ "$w" -ge 16777216 ] && printf up || printf off)" "$w"
     ui_row "" "qdisc"    "$([ "$q" = fq ] && printf up || printf off)"  "$q"
     ui_row "" "congestion" "$([ "$c" = bbr ] && printf up || printf off)" "$c"
+    ui_row "" "tcp_rmem max" "$([ "${t:-0}" -ge 16777216 ] && printf up || printf off)" "$t"
+    ui_row "" "slow start после простоя" "$([ "$i" = 0 ] && printf up || printf off)" "$([ "$i" = 0 ] && echo выключен || echo включён)"
     ui_row "" "файл"     "$([ -f "$PL_SYSCTL" ] && printf up || printf off)" "$PL_SYSCTL"
 
     ui_section ""
@@ -670,13 +672,12 @@ menu_sysctl() {
     ui_key b назад; printf '\n'
 
     case "$(ui_ask "выбор")" in
-      1) if [ -f "$PL_SYSCTL" ]; then
-           sysctl -p "$PL_SYSCTL" >/dev/null 2>&1
+      1) if pl_sysctl_apply; then
            [ "$(pl_sysctl_state)" = up ] \
-             && ui_ok "применено" \
+             && ui_ok "применено (прежний файл — в $PL_SYSCTL.bak)" \
              || ui_warn "применилось не полностью — проверь, есть ли bbr в ядре"
          else
-           ui_err "нет $PL_SYSCTL — перезапусти install.sh"
+           ui_err "нет $PL_ROOT/lib/sysctl.conf — обнови packetlab"
          fi
          ui_ask "enter" >/dev/null ;;
       2) # sysctl не откатывает уже применённое: значения по умолчанию
@@ -696,6 +697,8 @@ case "${1:-}" in
   status)    menu_health ;;
   sub)       pl_sub_url ;;
   qr)        if [ -n "$PL_DOMAIN" ]; then pl_sub_qr "${2:-plain}" "${3:-}"; else menu_links "${3:-}"; fi ;;
+  tune)      pl_sysctl_apply && ui_ok "тюнинг ядра применён: $(pl_sysctl_state)" \
+               || { ui_err "не удалось применить $PL_ROOT/lib/sysctl.conf"; exit 1; } ;;
   users-sync) pl_users_apply ;;   # после обновления packetlab: ключи всех пользователей → инбаунды
   rekey)     [ -n "${2:-}" ] || { ui_err "packetlab rekey <пользователь> [модуль …]"; exit 1; }
              pl_users rekey "${@:2}" && pl_users_apply ;;   # новые ключи, старые ссылки перестают работать

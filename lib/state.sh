@@ -42,14 +42,27 @@ pl_cert_days() {
 
 # Тюнинг ядра: буферы под QUIC + bbr/fq. Без буферов sing-box упирается
 # в потолок quic-go и пишет предупреждение в лог.
+PL_SYSCTL=/etc/sysctl.d/99-packetlab.conf
+
 pl_sysctl_state() {
-  local r q c
+  local r q c t i
   r=$(sysctl -n net.core.rmem_max 2>/dev/null || echo 0)
   q=$(sysctl -n net.core.default_qdisc 2>/dev/null || echo '')
   c=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo '')
-  if [ "$r" -ge 16777216 ] && [ "$q" = fq ] && [ "$c" = bbr ]; then printf 'up'
-  elif [ "$r" -ge 16777216 ] || [ "$c" = bbr ]; then printf 'blocked'
+  t=$(sysctl -n net.ipv4.tcp_rmem 2>/dev/null | awk '{print $3+0}')
+  i=$(sysctl -n net.ipv4.tcp_slow_start_after_idle 2>/dev/null || echo 1)
+  if [ "$r" -ge 16777216 ] && [ "$q" = fq ] && [ "$c" = bbr ] \
+     && [ "${t:-0}" -ge 16777216 ] && [ "$i" = 0 ]; then printf 'up'
+  elif [ "$r" -ge 16777216 ] || [ "$c" = bbr ]; then printf 'blocked'   # старый, неполный тюнинг: packetlab tune
   else printf 'off'; fi
+}
+
+# Кладёт lib/sysctl.conf из репозитория в /etc/sysctl.d и применяет. Прежний файл — в .bak.
+pl_sysctl_apply() {
+  local src="$PL_ROOT/lib/sysctl.conf"
+  [ -f "$src" ] || return 1
+  if [ -f "$PL_SYSCTL" ] && ! cmp -s "$src" "$PL_SYSCTL"; then cp -a "$PL_SYSCTL" "$PL_SYSCTL.bak"; fi
+  install -m 644 "$src" "$PL_SYSCTL" && sysctl -p "$PL_SYSCTL" >/dev/null 2>&1
 }
 
 # Общее здоровье: down если хоть один обязательный сервис лежит.
