@@ -7,6 +7,9 @@
 # Выходной сервер (его IP видят сайты):
 #   plr exit            поднять relay-in (VLESS + REALITY, домен не нужен) и напечатать токен;
 #                       повторный запуск ничего не меняет и печатает тот же токен
+#                       если на сервере haproxy-мультиплексор на 443 (packetlab), relay-in прячется
+#                       за ним по SNI: наружу только 443/tcp, в токене порт 443
+#   plr exit --move     перенести уже поднятый relay-in с отдельного порта за haproxy (токен новый)
 #   plr exit --remove   убрать relay-in
 # Входной сервер (к нему подключаются клиенты):
 #   plr link <токен>    outbound relay-out к выходу + проверочный relay-probe на 127.0.0.1:20999;
@@ -87,8 +90,9 @@ exit_state() { [ -f "$EXIT_STATE" ] && [ -f "$SB" ] && has_in relay-in && printf
 
 exit_remove() {
   [ -f "$SB" ] && has_in relay-in || { rm -f "$EXIT_STATE"; ok "relay-in нет — нечего убирать"; return 0; }
-  local port
+  local port listen
   port=$(python3 -c 'import json,sys;print(next(i["listen_port"] for i in json.load(open(sys.argv[1]))["inbounds"] if i.get("tag")=="relay-in"))' "$SB")
+  listen=$(python3 -c 'import json,sys;print(next(i.get("listen","") for i in json.load(open(sys.argv[1]))["inbounds"] if i.get("tag")=="relay-in"))' "$SB")
   python3 - "$SB" <<'PY'
 import json, sys
 p = sys.argv[1]
@@ -97,16 +101,131 @@ d["inbounds"] = [i for i in d.get("inbounds", []) if i.get("tag") != "relay-in"]
 json.dump(d, open(p + ".new", "w"), indent=2, ensure_ascii=False)
 PY
   sb_commit
-  ufw_on && ufw delete allow "$port/tcp" >/dev/null 2>&1
   rm -f "$EXIT_STATE"
   sb_restart
-  ok "выход убран, порт $port закрыт; входы с этим токеном больше не подключатся"
+  if [ "$listen" = 127.0.0.1 ]; then
+    hap_del
+    ok "выход убран, маршрут в haproxy снят; входы с этим токеном больше не подключатся"
+  else
+    ufw_on && ufw delete allow "$port/tcp" >/dev/null 2>&1
+    ok "выход убран, порт $port закрыт; входы с этим токеном больше не подключатся"
+  fi
+}
+
+# --------------------------------------------------------------- haproxy ---
+# Если на сервере уже стоит haproxy-мультиплексор на 443 (так ставит packetlab), relay-in
+# прячется за ним по SNI: наружу торчит только 443, отдельного порта нет. Строки с
+# маркером «# packetlab:relay» — те же, что понимает packetlab (pl_haproxy_*).
+HAP=/etc/haproxy/haproxy.cfg
+hap_front() {
+  command -v haproxy >/dev/null && systemctl is-active --quiet haproxy \
+    && grep -qE 'bind (\*|0\.0\.0\.0|:::?):443' "$HAP" 2>/dev/null \
+    && grep -q 'req.ssl_sni' "$HAP" 2>/dev/null
+}
+hap_sni_used() { grep -qiE "req\.ssl_sni -i $1( |\$)" "$HAP" 2>/dev/null; }
+
+hap_edit() {   # hap_edit add <sni> <порт> | del
+  local bak="$HAP.bak-$(date +%s)"
+  cp -a "$HAP" "$bak"
+  python3 - "$HAP" "$@" <<'PY'
+import sys
+p, action = sys.argv[1:3]
+mark = "# packetlab:relay"
+lines = open(p).read().split("\n")
+out, skip = [], False
+for l in lines:   # старое снимаем всегда — add идемпотентен
+    ours = l.rstrip().endswith(mark)
+    if l.startswith("backend relay ") and ours: skip = True; continue
+    if skip and (l.startswith("backend ") or l.startswith("frontend ")): skip = False
+    if skip or ours: continue
+    out.append(l)
+s = "\n".join(out)
+if action == "add":
+    sni, port = sys.argv[3:5]
+    rule = f"    use_backend relay if {{ req.ssl_sni -i {sni} }}  {mark}\n"
+    block = f"\nbackend relay  {mark}\n    mode tcp\n    server relay 127.0.0.1:{port}\n"
+    s = s.replace("    default_backend", rule + "    default_backend", 1) + ("" if s.endswith("\n") else "\n") + block
+open(p, "w").write(s)
+PY
+  if ! haproxy -c -f "$HAP" >/dev/null 2>&1; then
+    cp -a "$bak" "$HAP"; die "haproxy.cfg невалиден, откатил"
+  fi
+  systemctl reload haproxy
+}
+hap_add() { hap_edit add "$1" "$2"; }
+hap_del() { hap_edit del; }
+
+# SNI для relay-in за haproxy: заданный PLR_SNI, иначе первый из списка, не занятый другим маршрутом.
+pick_hap_sni() {
+  local c
+  if [ -n "${PLR_SNI:-}" ]; then
+    hap_sni_used "$PLR_SNI" && die "SNI $PLR_SNI уже занят другим маршрутом haproxy — задай другой PLR_SNI"
+    printf '%s' "$PLR_SNI"; return
+  fi
+  for c in www.bing.com www.amazon.com www.cloudflare.com www.nvidia.com www.tesla.com; do
+    hap_sni_used "$c" && continue
+    timeout 8 openssl s_client -connect "$c:443" -servername "$c" -tls1_3 </dev/null >/dev/null 2>&1 || continue
+    printf '%s' "$c"; return
+  done
+  die "не нашёл свободный SNI с TLS 1.3 — задай PLR_SNI"
+}
+
+free_local_port() {
+  local p _
+  for _ in $(seq 50); do
+    p=$(( 20000 + RANDOM % 40000 ))
+    port_busy "$p" || { printf '%s' "$p"; return; }
+  done
+  die "не нашёл свободный порт"
+}
+
+# Перенос уже работающего relay-in с отдельного порта за haproxy: ключи и uuid те же,
+# меняются порт (на 443) и, если старый занят, SNI. Входам нужен новый токен.
+exit_move() {
+  [ "$(exit_state)" = up ] || die "выход не поднят — нечего переносить"
+  [ "$(jget "$EXIT_STATE" mode)" = haproxy ] && { ok "выход уже за haproxy — тот же токен:"; print_token; return 0; }
+  hap_front || die "haproxy-мультиплексора на 443 нет — переносить некуда"
+  local old sni lport
+  old=$(jget "$EXIT_STATE" port); sni=$(jget "$EXIT_STATE" sni)
+  hap_sni_used "$sni" && sni=$(pick_hap_sni)
+  lport=$(free_local_port)
+  python3 - "$SB" "$lport" "$sni" <<'PY' || die "не смог изменить $SB"
+import json, sys
+p, lport, sni = sys.argv[1:4]
+d = json.load(open(p))
+for i in d["inbounds"]:
+    if i.get("tag") == "relay-in":
+        i["listen"] = "127.0.0.1"; i["listen_port"] = int(lport)
+        i["tls"]["server_name"] = sni
+        i["tls"]["reality"]["handshake"] = {"server": sni, "server_port": 443}
+json.dump(d, open(p + ".new", "w"), indent=2, ensure_ascii=False)
+PY
+  sb_commit
+  sb_restart
+  port_busy "$lport" || die "sing-box запущен, но порт $lport не слушается"
+  hap_add "$sni" "$lport"
+  ufw_on && ufw delete allow "$old/tcp" >/dev/null 2>&1
+  python3 - "$EXIT_STATE" "$sni" "$lport" <<'PY'
+import json, os, sys
+p = sys.argv[1]
+d = json.load(open(p))
+d.update({"port": 443, "sni": sys.argv[2], "mode": "haproxy", "lport": int(sys.argv[3])})
+json.dump(d, open(p, "w"), indent=2)
+os.chmod(p, 0o600)
+PY
+  ok "relay-in за haproxy: 443/tcp, SNI $sni (порт $old закрыт)"
+  warn "старый токен больше не работает — на входах: plr link <новый токен>"
+  print_token
 }
 
 exit_up() {
   if [ "$(exit_state)" = up ]; then
     ok "выход уже поднят — тот же токен:"
-    print_token; return 0
+    print_token
+    if [ "$(jget "$EXIT_STATE" mode)" != haproxy ] && hap_front; then
+      note "на сервере есть haproxy на 443: plr exit --move спрячет relay-in за ним (токен сменится)"
+    fi
+    return 0
   fi
 
   local missing=() c
@@ -139,12 +258,19 @@ for a in json.load(sys.stdin)["assets"]:
   fi
   ok "sing-box $(sing-box version | head -1 | awk '{print $3}')"
 
-  local sni port host name kp priv pbk uuid sid _
-  sni=${PLR_SNI:-www.bing.com}
+  local sni port host name kp priv pbk uuid sid _ mode=public listen='::' lport=0
+  if [ -z "${PLR_PORT:-}" ] && hap_front; then
+    mode=haproxy; listen=127.0.0.1
+    sni=$(pick_hap_sni)
+  else
+    sni=${PLR_SNI:-www.bing.com}
+  fi
   timeout 8 openssl s_client -connect "$sni:443" -servername "$sni" -tls1_3 </dev/null >/dev/null 2>&1 \
     || die "$sni не отвечает по TLS 1.3 отсюда — REALITY с ним работать не будет; задай PLR_SNI"
 
-  if [ -n "${PLR_PORT:-}" ]; then
+  if [ "$mode" = haproxy ]; then
+    lport=$(free_local_port); port=$lport
+  elif [ -n "${PLR_PORT:-}" ]; then
     port=$PLR_PORT
     port_busy "$port" && die "порт $port занят"
   elif ! port_busy 443; then
@@ -169,9 +295,9 @@ for a in json.load(sys.stdin)["assets"]:
 
   install -d -m 755 /etc/sing-box
   [ -f "$SB" ] || printf '{ "log": { "level": "warn" }, "inbounds": [], "outbounds": [ { "type": "direct", "tag": "direct" } ] }\n' > "$SB"
-  python3 - "$SB" "$port" "$uuid" "$sni" "$priv" "$sid" "$fresh" <<'PY' || die "не смог прочитать $SB"
+  python3 - "$SB" "$port" "$uuid" "$sni" "$priv" "$sid" "$fresh" "$listen" <<'PY' || die "не смог прочитать $SB"
 import json, sys
-p, port, uuid, sni, priv, sid, fresh = sys.argv[1:8]
+p, port, uuid, sni, priv, sid, fresh, listen = sys.argv[1:9]
 d = json.load(open(p))
 ins = [i for i in d.get("inbounds", []) if i.get("tag") != "relay-in"]
 # Пакет sing-box кладёт демонстрационный shadowsocks на 8080 — на свежей установке это открытый
@@ -179,7 +305,7 @@ ins = [i for i in d.get("inbounds", []) if i.get("tag") != "relay-in"]
 if fresh == "1":
     ins = [i for i in ins if i.get("tag")]
 ins.append({
-    "type": "vless", "tag": "relay-in", "listen": "::", "listen_port": int(port),
+    "type": "vless", "tag": "relay-in", "listen": listen, "listen_port": int(port),
     "users": [{"name": "relay", "uuid": uuid, "flow": "xtls-rprx-vision"}],
     "tls": {"enabled": True, "server_name": sni, "reality": {
         "enabled": True, "handshake": {"server": sni, "server_port": 443},
@@ -192,19 +318,25 @@ json.dump(d, open(p + ".new", "w"), indent=2, ensure_ascii=False)
 PY
   sb_commit
 
-  if ufw_on; then
+  if [ "$mode" = public ] && ufw_on; then
     ufw allow "$port/tcp" comment "packetlab:relay" >/dev/null 2>&1 && ok "порт $port открыт в UFW"
   fi
   sb_restart
   port_busy "$port" || die "sing-box запущен, но порт $port не слушается"
-  ok "relay-in слушает $port/tcp (REALITY под $sni)"
+  if [ "$mode" = haproxy ]; then
+    hap_add "$sni" "$port"
+    ok "relay-in за haproxy: 443/tcp, SNI $sni (локально 127.0.0.1:$port)"
+    port=443
+  else
+    ok "relay-in слушает $port/tcp (REALITY под $sni)"
+  fi
 
   install -d -m 700 "$STATE_DIR"
-  python3 - "$EXIT_STATE" "$name" "$host" "$port" "$uuid" "$pbk" "$sid" "$sni" <<'PY'
+  python3 - "$EXIT_STATE" "$name" "$host" "$port" "$uuid" "$pbk" "$sid" "$sni" "$mode" "$lport" <<'PY'
 import json, os, sys
 p = sys.argv[1]
-d = dict(zip(("name", "host", "port", "uuid", "pbk", "sid", "sni"), sys.argv[2:]))
-d["port"] = int(d["port"])
+d = dict(zip(("name", "host", "port", "uuid", "pbk", "sid", "sni", "mode", "lport"), sys.argv[2:]))
+d["port"] = int(d["port"]); d["lport"] = int(d["lport"])
 json.dump(d, open(p, "w"), indent=2)
 os.chmod(p, 0o600)
 PY
@@ -358,7 +490,7 @@ status() {
     on)     say "вход: трафик через $(entry_where)" ;;
   esac
   if [ "$(exit_state)" = up ]; then
-    say "выход: relay-in на $(jget "$EXIT_STATE" port)/tcp — plr exit покажет токен"
+    say "выход: relay-in на $(jget "$EXIT_STATE" port)/tcp$([ "$(jget "$EXIT_STATE" mode)" = haproxy ] && printf ' (за haproxy, SNI %s)' "$(jget "$EXIT_STATE" sni)") — plr exit покажет токен"
   else
     say "выход: не поднят"
   fi
@@ -366,7 +498,12 @@ status() {
 
 # ================================================================= CLI ====
 case "${1:-status}" in
-  exit)        need_root; if [ "${2:-}" = --remove ]; then exit_remove; else exit_up; fi ;;
+  exit)        need_root
+               case "${2:-}" in
+                 --remove) exit_remove ;;
+                 --move)   exit_move ;;
+                 *)        exit_up ;;
+               esac ;;
   link)        need_root; [ -n "${2:-}" ] || die "plr link <токен>"; entry_link "$2" && entry_test ;;
   test)        entry_test ;;
   on)          need_root; entry_on ;;
