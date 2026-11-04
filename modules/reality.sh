@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 MOD_ID=reality
-MOD_NAME="REALITY"
+MOD_NAME="VLESS + REALITY"
 MOD_DESC="VLESS + xtls-rprx-vision, маскировка под чужой TLS"
 MOD_ENGINE=sing-box
 MOD_PORT=8443
