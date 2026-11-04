@@ -172,13 +172,17 @@ def build(fmt: str, user: str, rules_url: str = "", core: tuple = (0, 0)) -> tup
             "rules": ([{"domain": own_hosts, "server": "local"}] if own_hosts else [])
                      + [{"domain_suffix": DIRECT_SUFFIXES, "server": "local"}],
             "final": "remote",
-            "strategy": "ipv4_only",
+            # Оба семейства, но v4 первым: клиент без IPv6 не ждёт таймаута, а v6-сайты
+            # открываются (сервер выходит в IPv6 сам).
+            "strategy": "prefer_ipv4",
         }
         cfg = {
             "log": {"level": "warn", "timestamp": True},
             "dns": cfg_dns,
             "inbounds": [
-                {"type": "tun", "tag": "tun-in", "address": ["172.19.0.1/30"],
+                {"type": "tun", "tag": "tun-in",
+                 # v6-адрес нужен, чтобы IPv6-трафик заходил в туннель, а не шёл мимо него
+                 "address": ["172.19.0.1/30", "fdfe:dcba:9876::1/126"],
                  "auto_route": True, "strict_route": True, "stack": "mixed"},
                 {"type": "mixed", "tag": "mixed-in",
                  "listen": "127.0.0.1", "listen_port": 2080},
@@ -206,7 +210,7 @@ def build(fmt: str, user: str, rules_url: str = "", core: tuple = (0, 0)) -> tup
                     {"protocol": "quic", "action": "reject"},
                 ],
                 "final": "proxy", "auto_detect_interface": True,
-                "default_domain_resolver": {"server": "local"},
+                "default_domain_resolver": {"server": "local", "strategy": "prefer_ipv4"},
             },
         }
         add_adblock(cfg, rules_url, core)
