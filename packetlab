@@ -704,5 +704,9 @@ case "${1:-}" in
              [ "$(mod_call "$f" mod_status)" = off ] || { ui_err "$(mod_meta "$f" MOD_NAME) уже установлен"; exit 1; }
              pl_preflight "$f" || { ui_note "установка отменена, конфиг не тронут"; exit 1; }
              mod_call "$f" mod_install && pl_postflight "$f" ;;
+  remove)    f="$PL_ROOT/modules/${2:-}.sh"   # packetlab remove <модуль> — без вопросов, как пункт «удалить» в меню
+             [ -n "${2:-}" ] && [ -f "$f" ] || { ui_err "packetlab remove <модуль>"; exit 1; }
+             [ "$(mod_call "$f" mod_status)" != off ] || { ui_err "$(mod_meta "$f" MOD_NAME) не установлен"; exit 1; }
+             mod_call "$f" mod_remove && ui_ok "$(mod_meta "$f" MOD_NAME) удалён" ;;
   *)         ui_err "неизвестная команда: $1"; exit 1 ;;
 esac
