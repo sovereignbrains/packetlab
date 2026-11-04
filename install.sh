@@ -212,10 +212,12 @@ export NEEDRESTART_MODE=a          # не спрашивать, какие се�
 say "apt update…"
 apt-get update -qq || die "apt update не прошёл"
 
-# Обновление системы — только по явному запросу: PL_UPGRADE=1.
-# На работающем стеке upgrade может дёрнуть haproxy/openssl и перезапустить
-# сервисы, поэтому по умолчанию не трогаем.
-if [ "${PL_UPGRADE:-0}" = 1 ]; then
+# Обновление системы: на первой установке (стека ещё нет, ломать нечего) — сразу;
+# на повторном запуске — только по явному PL_UPGRADE=1, потому что на работающем
+# стеке upgrade может дёрнуть haproxy/openssl и перезапустить сервисы.
+# PL_UPGRADE=0 отключает и первое обновление.
+if [ ! -f "$PL_ETC/meta.json" ]; then PL_UPGRADE_DEFAULT=1; else PL_UPGRADE_DEFAULT=0; fi
+if [ "${PL_UPGRADE:-$PL_UPGRADE_DEFAULT}" = 1 ]; then
   pending=$(apt-get -s upgrade 2>/dev/null | grep -c '^Inst ')
   if [ "${pending:-0}" -eq 0 ]; then
     ok "система актуальна"
@@ -481,6 +483,7 @@ if [ ! -f /etc/sing-box/config.json ]; then
   cat > /etc/sing-box/config.json <<'SB'
 {
   "log": { "level": "info", "timestamp": true },
+  "dns": { "servers": [ { "type": "https", "tag": "google", "server": "8.8.8.8", "server_port": 443 } ] },
   "inbounds": [],
   "outbounds": [ { "type": "direct", "tag": "direct" } ]
 }
@@ -491,6 +494,18 @@ else
   # который конфликтует с decoy-сайтом и роняет сервис на старте. Свои
   # инбаунды packetlab всегда тегирует, поэтому нетегированные — чужие.
   # `sing-box check` такое не ловит: синтаксис валиден, падает уже listener.
+  # Серверный DNS sing-box: DoH на 443 (DoT на 853 — отдельный порт, заметнее). Если блока
+  # dns нет, добавляем; если он уже настроен, не трогаем.
+  python3 - <<'PYDNS'
+import json, shutil, sys, time
+p = '/etc/sing-box/config.json'
+d = json.load(open(p))
+if d.get('dns', {}).get('servers'):
+    sys.exit(0)
+shutil.copy2(p, p + '.bak-%d' % time.time())
+d['dns'] = {'servers': [{'type': 'https', 'tag': 'google', 'server': '8.8.8.8', 'server_port': 443}]}
+json.dump(d, open(p, 'w'), indent=2, ensure_ascii=False)
+PYDNS
   if dropped=$(python3 - <<'PYSB'
 import json, shutil, time, sys
 p = '/etc/sing-box/config.json'
