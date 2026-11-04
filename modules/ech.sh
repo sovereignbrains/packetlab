@@ -112,7 +112,7 @@ mod_link() {  # mod_link <формат> [пользователь]
   case "$1" in
     singbox) cat <<JSON
 { "type":"anytls","tag":"${name}","server":"$(pl_meta_get ${MOD_ID}_sni)","server_port":443,
-  "password":"${pass}",
+  "password":"${pass}", "min_idle_session":2,
   "tls":{"enabled":true,"server_name":"$(pl_meta_get ${MOD_ID}_sni)","ech":{"enabled":true}} }
 JSON
     ;;

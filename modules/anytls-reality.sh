@@ -69,7 +69,7 @@ mod_link() {  # mod_link <формат> [пользователь]
   case "$1" in
     singbox) cat <<JSON
 { "type":"anytls","tag":"${name}","server":"${PL_HOST}","server_port":443,
-  "password":"${pass}",
+  "password":"${pass}", "min_idle_session":2,
   "tls":{"enabled":true,"server_name":"$(pl_meta_get ${MOD_ID}_sni)","utls":{"enabled":true,"fingerprint":"chrome"},
     "reality":{"enabled":true,"public_key":"$(pl_meta_get ${MOD_ID}_pbk)","short_id":"$(pl_meta_get ${MOD_ID}_sid)"}} }
 JSON
