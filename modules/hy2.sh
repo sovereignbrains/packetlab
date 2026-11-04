@@ -16,14 +16,16 @@ mod_status() {
   printf up
 }
 
-# up_mbps/down_mbps намеренно не задаются: с ними включается Brutal, который
-# игнорирует сигналы перегрузки. По умолчанию работает BBR.
+# up_mbps/down_mbps намеренно не задаются. Одного этого мало: без ignore_client_bandwidth
+# сервер включает Brutal на скорость, которую назвал клиент (sing-quic, service.go).
+# С ignore_client_bandwidth=true при пустых лимитах сервер отвечает RxAuto и сам шлёт BBR.
+# Brutal игнорирует сигналы перегрузки, поэтому нужен именно BBR.
 mod_install() {
   pl_singbox_has_tag "${MOD_ID}-in" && { ui_err "инбаунд ${MOD_ID}-in уже есть — сначала удалить"; return 1; }
   local users; users=$(pl_inbound_users) || return 1
   pl_singbox_add_inbound "$(cat <<JSON
 { "type":"hysteria2","tag":"${MOD_ID}-in","listen":"::","listen_port":${MOD_PORT},
-  "users":${users},
+  "users":${users}, "ignore_client_bandwidth":true,
   "tls":{"enabled":true,"server_name":"${PL_DOMAIN}","alpn":["h3"],
     "certificate_path":"${PL_CERT}","key_path":"${PL_KEY}"} }
 JSON
