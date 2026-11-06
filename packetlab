@@ -185,7 +185,7 @@ pl_preflight() {
 
   if [ -z "$PL_DOMAIN" ] && [ "$(mod_meta "$f" MOD_NEEDS_DOMAIN)" != no ]; then
     ui_err "сервер поставлен без домена — $(mod_meta "$f" MOD_NAME) требует домен и сертификат"
-    ui_note "без домена работают REALITY, AnyTLS + REALITY, Mieru и Telegram MTProxy"
+    ui_note "без домена работают REALITY, AnyTLS + REALITY, ShadowTLS, Hysteria2, Mieru и Telegram MTProxy"
     rc=1
   fi
 
@@ -716,6 +716,33 @@ case "${1:-}" in
   link)      for f in "${MODULES[@]}"; do   # packetlab link [формат] [пользователь]
                [ "$(mod_call "$f" mod_status)" = off ] || mod_call "$f" mod_link "${2:-uri}" "${3:-}"
              done ;;
+  # packetlab outbounds [пользователь] — для машины (клиент Sovereign, «Свой сервер»):
+  # ровно один JSON {"outbounds":[...]} на stdout — singbox-формат всех установленных
+  # модулей, массивы (ShadowTLS со звеном -hop) развёрнуты. Всё, что модуль сказал
+  # не JSON-ом (предупреждения ui_*), уходит в stderr. Нет ни одного outbound — код 1.
+  outbounds) for f in "${MODULES[@]}"; do
+               [ "$(mod_call "$f" mod_status)" = off ] || mod_call "$f" mod_link singbox "${2:-}"
+             done | python3 -c '
+import json, sys
+text, dec, out, i = sys.stdin.read(), json.JSONDecoder(), [], 0
+while i < len(text):
+    j = min([k for k in (text.find("{", i), text.find("[", i)) if k >= 0], default=-1)
+    if j < 0:
+        noise = text[i:].strip()
+        if noise: print(noise, file=sys.stderr)
+        break
+    noise = text[i:j].strip()
+    if noise: print(noise, file=sys.stderr)
+    try:
+        obj, i = dec.raw_decode(text, j)
+    except ValueError as e:
+        print("не JSON: %s" % e, file=sys.stderr); sys.exit(1)
+    for o in (obj if isinstance(obj, list) else [obj]):
+        if isinstance(o, dict) and o.get("type"): out.append(o)
+if not out:
+    print("установленных протоколов с форматом sing-box нет", file=sys.stderr); sys.exit(1)
+json.dump({"outbounds": out}, sys.stdout, ensure_ascii=False, indent=2); print()
+' ;;
   reconfig)  [ -n "${2:-}" ] || { ui_err "packetlab reconfig <модуль> [параметр=значение …]"; exit 1; }   # применить настройки к стоящему модулю без смены паролей
              f="$PL_ROOT/modules/$2.sh"; [ -f "$f" ] || { ui_err "нет модуля $2"; exit 1; }
              ( . "$f"; declare -F mod_reconfig >/dev/null || { ui_err "у модуля $2 нет reconfig"; exit 1; }; mod_reconfig "${@:3}" ) ;;

@@ -17,7 +17,7 @@ Debian 13, x86_64, root. Установщик спрашивает домен �
   wildcard-сертификат по DNS-01, decoy-сайт, подписка, все протоколы.
   Zone ID установщик находит по токену сам, спрашивает — только если токен зону не видит;
 - **без домена** (пустой Enter) — ни Cloudflare, ни сертификата: доступны REALITY,
-  AnyTLS + REALITY, ShadowTLS v3, Mieru и Telegram MTProxy, в ссылках IP сервера, подписки нет (ссылки и QR — в меню).
+  AnyTLS + REALITY, ShadowTLS v3, Hysteria2, Mieru и Telegram MTProxy, в ссылках IP сервера, подписки нет (ссылки и QR — в меню).
 
 Без интерактива (удобно для нескольких серверов):
 
@@ -28,6 +28,10 @@ PL_DOMAIN=example.com PL_CF_TOKEN=... PL_CF_ZONE=... \
 PL_NO_DOMAIN=1 bash <(wget -qO- https://raw.githubusercontent.com/sovereignbrains/packetlab/main/install.sh)
 ```
 
+- `PL_REF=<коммит|тег|ветка>` — взять все файлы с этой версии (по умолчанию `main`); записывается в `meta.json` как `ref`.
+- `PL_YES=1` — не задавать вопросов, на которые можно ответить «да» (не-Debian): для установки без терминала.
+- Порты, на которых слушает `sshd` (и `Port` из его конфига), открываются в ufw до сброса — вход не теряется и на нестандартном порту.
+
 ⚠️ Установщик выполняет `ufw --force reset` — запускать только на чистом
 сервере, иначе снесёт существующие правила firewall.
 
@@ -35,6 +39,7 @@ PL_NO_DOMAIN=1 bash <(wget -qO- https://raw.githubusercontent.com/sovereignbrain
 
 ```bash
 packetlab            # меню
+packetlab outbounds  # для машины: один JSON {"outbounds":[...]} всех стоящих протоколов (формат sing-box)
 packetlab status     # диагностика: конфиг / порт / firewall
 packetlab sub        # ссылка-подписка
 packetlab qr         # QR подписки (Karing, Hiddify); packetlab qr singbox — импорт в приложение sing-box
@@ -45,7 +50,7 @@ packetlab tune                     # тюнинг ядра из lib/sysctl.conf:
 ```
 
 `install all` ставит по очереди всё, чего ещё нет (без домена — только REALITY,
-AnyTLS + REALITY, ShadowTLS v3, Mieru и Telegram MTProxy), каждый протокол со своими проверками; упавший не
+AnyTLS + REALITY, ShadowTLS v3, Hysteria2, Mieru и Telegram MTProxy), каждый протокол со своими проверками; упавший не
 останавливает остальные, в конце — итог. sing-box перезапускается на каждом.
 
 ## Что внутри
@@ -58,6 +63,26 @@ AnyTLS + REALITY, ShadowTLS v3, Mieru и Telegram MTProxy), каждый про�
 | Протоколы | REALITY, AnyTLS + REALITY, ShadowTLS v3 (shadowsocks-2022 внутри; клиентское звено — два outbound через detour, подписка отдаёт оба), AnyTLS + ECH, NaiveProxy, Hysteria2 — инбаунды sing-box (Mieru — только если стоящее ядро его знает, сборка [mbox](https://github.com/enfein/mbox) ставится вручную); Telegram MTProxy ([telemt](https://github.com/telemt/telemt), FakeTLS, свой бинарник и служба) — вне подписки, ссылки `tg://` в меню; с доменом ещё WEB-прокси Telegram (`tg://webproxy`, через Caddy, случайный путь) |
 | Маскировка | Caddy, decoy-сайт (с доменом); без домена чужой SNI уходит в REALITY |
 | Подписка | один URL, формат по User-Agent |
+
+### Hysteria2 и фильтр UDP
+
+У части провайдеров UDP режут или душат. Поэтому Hysteria2 ставится и без домена, а при
+новой установке — всегда с обфускацией **salamander** (QUIC не узнать по рукопожатию).
+`gecko` — только вручную, `packetlab reconfig hy2 obfs=gecko`, и только если проверено,
+что у этого провайдера он проходит и клиент его понимает.
+
+- **Без домена** — самоподписанный сертификат на `www.example.com` в
+  `/etc/packetlab/hy2.{crt,key}`, клиент сверяет пин: `certificate_public_key_sha256` в
+  sing-box, `insecure=1&pinSHA256=` в ссылке. Порт — 443/udp (haproxy держит только tcp).
+  Сертификат не перевыпускается, пока модуль стоит.
+- **Перескок портов** — UDP 20000–20100 перенаправляются на порт Hysteria2 таблицей
+  `inet plhop` (служба `packetlab-hop`). В ссылках — второй outbound
+  `Hysteria2 · порты 20000-20100` (`server_ports`, `hop_interval` 20s), `mport=` в uri.
+  Если nftables не дал NAT (контейнер), модуль ставится без перескока и говорит об этом;
+  `packetlab reconfig hy2 hop=on|off`.
+- С доменом — как раньше: Let's Encrypt, порт 9445.
+- Если UDP закрыт совсем, клиент уходит на TCP-протоколы (REALITY, AnyTLS + REALITY,
+  ShadowTLS) — они стоят рядом.
 
 Подписка — sing-box JSON с `urltest`. Karing и Hiddify получают всё, официальный
 клиент sing-box — без Mieru: он этого протокола не знает (модуль помечен

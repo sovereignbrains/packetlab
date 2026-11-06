@@ -8,7 +8,7 @@
 # сертификат через DNS-01 и поднимает Caddy с decoy-сайтом.
 #
 # Без домена (Enter на вопросе о домене или PL_NO_DOMAIN=1): ни Cloudflare,
-# ни сертификата, ни decoy — доступны только REALITY, AnyTLS + REALITY, ShadowTLS и Telegram MTProxy,
+# ни сертификата, ни decoy — доступны только REALITY, AnyTLS + REALITY, ShadowTLS, Hysteria2 (самоподписанный сертификат с пином) и Telegram MTProxy,
 # в ссылках IP сервера.
 #
 # Протоколы НЕ ставятся автоматически — это делается из меню после установки.
@@ -16,7 +16,12 @@
 
 set -uo pipefail
 
-REPO_RAW="https://raw.githubusercontent.com/sovereignbrains/packetlab/main"
+# PL_REF — ветка, тег или коммит, с которого берутся остальные файлы. Клиент
+# (Sovereign, «Свой сервер») запускает install.sh с конкретного коммита и
+# передаёт его же сюда, чтобы модули были той же версии, что и установщик.
+PL_REF="${PL_REF:-main}"
+[[ "$PL_REF" =~ ^[A-Za-z0-9._/-]+$ ]] || { printf 'PL_REF=%s — не похоже на ветку или коммит\n' "$PL_REF" >&2; exit 1; }
+REPO_RAW="https://raw.githubusercontent.com/sovereignbrains/packetlab/$PL_REF"
 PL_ROOT=/opt/packetlab
 PL_ETC=/etc/packetlab
 PL_VAR=/var/lib/packetlab
@@ -92,7 +97,8 @@ cf_zone_lookup() {
 . /etc/os-release 2>/dev/null || die "не могу определить ОС"
 if [ "${ID:-}" != debian ]; then
   warn "ОС: ${PRETTY_NAME:-неизвестно}. Скрипт писался под Debian 13."
-  [ "$(ask 'продолжить? (y/N)')" = y ] || exit 1
+  # PL_YES=1 — установка без терминала (по ssh из клиента): вопрос не задаётся.
+  [ "${PL_YES:-0}" = 1 ] || [ "$(ask 'продолжить? (y/N)')" = y ] || exit 1
 elif [ "${VERSION_ID:-0}" -lt 13 ] 2>/dev/null; then
   warn "Debian ${VERSION_ID}, ожидался 13+"
 fi
@@ -134,7 +140,7 @@ elif [ -n "$DOMAIN" ]; then
   valid_domain "$DOMAIN" || die "PL_DOMAIN=$DOMAIN — не похоже на домен"
 else
   [ -n "$prev_domain" ] \
-    || say "без домена: только REALITY, AnyTLS + REALITY, ShadowTLS и Telegram MTProxy — без Cloudflare и сертификата"
+    || say "без домена: только REALITY, AnyTLS + REALITY, ShadowTLS, Hysteria2 (самоподписанный сертификат с пином) и Telegram MTProxy — без Cloudflare и сертификата"
   while true; do
     if [ -n "$prev_domain" ]; then
       DOMAIN=$(ask "домен без поддомена" "$prev_domain")
@@ -233,7 +239,8 @@ else
     || ok "система актуальна"
 fi
 
-pkgs=(curl ca-certificates gnupg jq openssl ufw haproxy python3 python3-venv dnsutils iproute2 qrencode)
+# nftables — перескок портов Hysteria2 (своя таблица plhop)
+pkgs=(curl ca-certificates gnupg jq openssl ufw haproxy python3 python3-venv dnsutils iproute2 qrencode nftables)
 # certbot нужен только под сертификат домена
 [ "$NO_DOMAIN" = 1 ] || pkgs+=(certbot python3-certbot-dns-cloudflare)
 apt-get install -y -qq "${pkgs[@]}" >/dev/null || die "не смог поставить базовые пакеты"
@@ -361,14 +368,23 @@ sysctl -p /etc/sysctl.d/99-packetlab.conf >/dev/null 2>&1
 
 # -------------------------------------------------------------- firewall -
 step "firewall"
+# Порты sshd — до сброса: правило OpenSSH открывает только 22, и сервер с ssh
+# на другом порту после enable закрылся бы навсегда. Берём и то, что sshd
+# реально слушает, и то, что сказано в его конфиге.
+ssh_ports=$( { ss -Hltnp 2>/dev/null | awk '/"sshd"/ {n=split($4,a,":"); print a[n]}'
+               sshd -T 2>/dev/null | awk '$1=="port" {print $2}'; } | grep -E '^[0-9]+$' | sort -un)
+[ -n "$ssh_ports" ] || ssh_ports=22
 ufw --force disable >/dev/null 2>&1
 ufw --force reset >/dev/null 2>&1
 ufw default deny incoming >/dev/null
 ufw default allow outgoing >/dev/null
 ufw allow OpenSSH >/dev/null
+for p in $ssh_ports; do
+  [ "$p" = 22 ] || ufw allow "$p/tcp" comment 'packetlab:ssh' >/dev/null
+done
 ufw allow 443/tcp comment 'packetlab:haproxy' >/dev/null
 ufw --force enable >/dev/null
-ok "открыты: SSH, 443/tcp. Порты протоколов откроются при их установке"
+ok "открыты: SSH ($(printf '%s' "$ssh_ports" | tr '\n' ' ' | sed 's/ $//')), 443/tcp. Порты протоколов откроются при их установке"
 
 # --------------------------------------------------------------- haproxy -
 step "haproxy" "SNI-мультиплексор на 443/tcp"
@@ -619,7 +635,13 @@ if [ ! -f "$PL_ETC/users.json" ]; then
     "$PL_USER" "$(openssl rand -hex 16)" > "$PL_ETC/users.json"
   chmod 600 "$PL_ETC/users.json"
 fi
-ok "состояние в $PL_ETC"
+PL_ETC="$PL_ETC" PL_REF="$PL_REF" python3 - <<'PYREF' || warn "не записал версию в meta.json"
+import json, os
+p = os.environ['PL_ETC'] + '/meta.json'
+d = json.load(open(p)); d['ref'] = os.environ['PL_REF']
+json.dump(d, open(p, 'w'), indent=2, ensure_ascii=False)
+PYREF
+ok "состояние в $PL_ETC (версия $PL_REF)"
 
 # Секция firewall выше сбрасывает ufw и открывает только SSH и 443 — правила
 # уже установленных протоколов (Hysteria2, Mieru и т.п.) при этом
@@ -713,7 +735,7 @@ fi
 
 head_ "готово" "протоколы ставятся из меню"
 if [ "$NO_DOMAIN" = 1 ]; then
-  printf '  %sбез домена: доступны REALITY, AnyTLS + REALITY, ShadowTLS и Telegram MTProxy, в ссылках %s%s\n' "$C_GRY" "$SERVER_IP" "$C_RST"
+  printf '  %sбез домена: доступны REALITY, AnyTLS + REALITY, ShadowTLS, Hysteria2 (самоподписанный сертификат с пином) и Telegram MTProxy, в ссылках %s%s\n' "$C_GRY" "$SERVER_IP" "$C_RST"
   printf '  %sподписки нет — ссылки и QR в меню, пункт l%s\n\n' "$C_GRY" "$C_RST"
 else
   printf '  %sпроверь, что A-запись %s → %s уже есть%s\n' "$C_GRY" "$DOMAIN" "$SERVER_IP" "$C_RST"
